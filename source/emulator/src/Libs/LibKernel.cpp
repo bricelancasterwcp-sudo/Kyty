@@ -18,6 +18,7 @@
 #include "Emulator/Loader/RuntimeLinker.h"
 #include "Emulator/Loader/SymbolDatabase.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -288,6 +289,78 @@ static KYTY_SYSV_ABI int cpuset_getaffinity(int level, int which, int64_t id, si
 	*static_cast<uint8_t*>(mask) = 0x7F;
 
 	return 0;
+}
+
+// Process-management calls the OpenOrbis crt references but a single-process
+// title never meaningfully uses. They exist so imports resolve; each returns
+// the benign value its posix contract allows.
+
+static KYTY_SYSV_ABI int getuid()
+{
+	return 0; // root
+}
+
+static KYTY_SYSV_ABI int getgid()
+{
+	return 0;
+}
+
+static KYTY_SYSV_ABI int setuid(int /*uid*/)
+{
+	return 0;
+}
+
+static KYTY_SYSV_ABI int chdir(const char* /*path*/)
+{
+	PRINT_NAME();
+
+	return 0;
+}
+
+static KYTY_SYSV_ABI int rmdir(const char* /*path*/)
+{
+	PRINT_NAME();
+
+	return 0;
+}
+
+static KYTY_SYSV_ABI int execve(const char* /*path*/, char* const* /*argv*/, char* const* /*envp*/)
+{
+	PRINT_NAME();
+
+	*Posix::GetErrorAddr() = Posix::POSIX_ENOSYS;
+	return -1;
+}
+
+static KYTY_SYSV_ABI int pipe(int* /*fds*/)
+{
+	PRINT_NAME();
+
+	*Posix::GetErrorAddr() = Posix::POSIX_ENOSYS;
+	return -1;
+}
+
+static KYTY_SYSV_ABI int dup(int /*fd*/)
+{
+	PRINT_NAME();
+
+	*Posix::GetErrorAddr() = Posix::POSIX_EBADF;
+	return -1;
+}
+
+static KYTY_SYSV_ABI int dup2(int /*oldfd*/, int newfd)
+{
+	PRINT_NAME();
+
+	return newfd;
+}
+
+static KYTY_SYSV_ABI int wait4(int /*pid*/, int* /*status*/, int /*options*/, void* /*rusage*/)
+{
+	PRINT_NAME();
+
+	*Posix::GetErrorAddr() = Posix::POSIX_ECHILD;
+	return -1;
 }
 
 static KYTY_SYSV_ABI int64_t sysconf(int name)
@@ -773,6 +846,70 @@ int KYTY_SYSV_ABI fstat(int d, LibKernel::FileSystem::FileStat* sb)
 	return POSIX_CALL(LibKernel::FileSystem::KernelFstat(d, sb));
 }
 
+int KYTY_SYSV_ABI mkdir(const char* path, uint16_t mode)
+{
+	PRINT_NAME();
+
+	return POSIX_N_CALL(LibKernel::FileSystem::KernelMkdir(path, mode));
+}
+
+int KYTY_SYSV_ABI unlink(const char* path)
+{
+	PRINT_NAME();
+
+	return POSIX_CALL(LibKernel::FileSystem::KernelUnlink(path));
+}
+
+int KYTY_SYSV_ABI rename(const char* from, const char* to)
+{
+	PRINT_NAME();
+
+	if (from == nullptr || to == nullptr)
+	{
+		*GetErrorAddr() = POSIX_EINVAL;
+		return -1;
+	}
+
+	// Titles rename a temp file over a savegame; translate both guest paths
+	// to their host locations and let the host do the atomic replace
+	auto real_from = LibKernel::FileSystem::GetRealFilename(String::FromUtf8(from));
+	auto real_to   = LibKernel::FileSystem::GetRealFilename(String::FromUtf8(to));
+
+	printf("\t %s -> %s\n", real_from.C_Str(), real_to.C_Str());
+
+	if (std::rename(real_from.C_Str(), real_to.C_Str()) != 0)
+	{
+		*GetErrorAddr() = POSIX_EIO;
+		return -1;
+	}
+
+	return 0;
+}
+
+int KYTY_SYSV_ABI pthread_setcancelstate(int state, int* old_state)
+{
+	PRINT_NAME();
+
+	// posix allows a null old_state; the sce impl dereferences unconditionally
+	int old = 0;
+
+	int result = POSIX_PTHREAD_CALL(LibKernel::PthreadSetcancelstate(state, &old));
+
+	if (old_state != nullptr)
+	{
+		*old_state = old;
+	}
+
+	return result;
+}
+
+void KYTY_SYSV_ABI pthread_testcancel()
+{
+	// PRINT_NAME();
+
+	LibKernel::PthreadTestcancel();
+}
+
 LIB_DEFINE(InitLibKernel_1_Posix)
 {
 	LIB_FUNC("lLMT9vJAck0", clock_gettime);
@@ -830,6 +967,9 @@ LIB_DEFINE(InitLibKernel_1_FS)
 	LIB_FUNC("j2AIqSqJP0w", FileSystem::KernelGetdents);
 	LIB_FUNC("1-LFLmRFxxM", FileSystem::KernelMkdir);
 	LIB_FUNC("mqQMh1zPPT8", Posix::fstat);
+	LIB_FUNC("JGMio+21L4c", Posix::mkdir);
+	LIB_FUNC("VAzswvTOCzI", Posix::unlink);
+	LIB_FUNC("NN01qLRhiqU", Posix::rename);
 }
 
 LIB_DEFINE(InitLibKernel_1_Mem)
@@ -1010,6 +1150,18 @@ LIB_DEFINE(InitLibKernel_1)
 	LIB_FUNC("NhpspxdjEKU", Posix::nanosleep);
 	LIB_FUNC("Wh7HbV7JFqc", LibKernel::getrlimit);
 	LIB_FUNC("Pdgml4rbxYk", LibKernel::cpuset_getaffinity);
+	LIB_FUNC("kg4x8Prhfxw", LibKernel::getuid);
+	LIB_FUNC("AfuS23bX6kg", LibKernel::getgid);
+	LIB_FUNC("JVmUZwK-HJU", LibKernel::setuid);
+	LIB_FUNC("6mMQ1MSPW-Q", LibKernel::chdir);
+	LIB_FUNC("c7ZnT7V1B98", LibKernel::rmdir);
+	LIB_FUNC("-3nj+K1elI0", LibKernel::execve);
+	LIB_FUNC("-Jp7F+pXxNg", LibKernel::pipe);
+	LIB_FUNC("iiQjzvfWDq0", LibKernel::dup);
+	LIB_FUNC("W8f1adVl+48", LibKernel::dup2);
+	LIB_FUNC("RFlsu7nfopM", LibKernel::wait4);
+	LIB_FUNC("lZzFeSxPl08", Posix::pthread_setcancelstate);
+	LIB_FUNC("nYBrkGDqxh8", Posix::pthread_testcancel);
 	LIB_FUNC("0t0-MxQNwK4", LibKernel::raise);
 	LIB_FUNC("KiJEPEWRyUY", LibKernel::sigaction);
 	LIB_FUNC("hHlZQUnlxSM", LibKernel::getrusage);
