@@ -468,11 +468,48 @@ int KYTY_SYSV_ABI stat(const char* path, LibKernel::FileSystem::FileStat* sb)
 	return POSIX_CALL(LibKernel::FileSystem::KernelStat(path, sb));
 }
 
+void* KYTY_SYSV_ABI mmap(void* addr, size_t len, int prot, int flags, int fd, int64_t offset)
+{
+	PRINT_NAME();
+
+	printf("\t addr   = 0x%016" PRIx64 "\n", reinterpret_cast<uint64_t>(addr));
+	printf("\t len    = %" PRIu64 "\n", len);
+	printf("\t prot   = %d\n", prot);
+	printf("\t flags  = %d\n", flags);
+	printf("\t fd     = %d\n", fd);
+	printf("\t offset = %" PRId64 "\n", offset);
+
+	// Only anonymous mappings are supported (FreeBSD MAP_ANON = 0x1000)
+	EXIT_NOT_IMPLEMENTED((static_cast<uint32_t>(flags) & 0x1000u) == 0);
+	EXIT_NOT_IMPLEMENTED(fd != -1);
+	EXIT_NOT_IMPLEMENTED(offset != 0);
+
+	void* out    = addr;
+	int   result = LibKernel::Memory::KernelMapFlexibleMemory(&out, len, prot & 0x7, 0);
+
+	if (result != OK)
+	{
+		*GetErrorAddr() = LibKernel::KernelToPosix(result);
+		return reinterpret_cast<void*>(-1); // MAP_FAILED
+	}
+
+	return out;
+}
+
+int KYTY_SYSV_ABI munmap(void* addr, size_t len)
+{
+	PRINT_NAME();
+
+	return POSIX_CALL(LibKernel::Memory::KernelMunmap(reinterpret_cast<uint64_t>(addr), len));
+}
+
 LIB_DEFINE(InitLibKernel_1_Posix)
 {
 	LIB_FUNC("lLMT9vJAck0", clock_gettime);
 	LIB_FUNC("yS8U2TGCe1A", nanosleep);
 	LIB_FUNC("E6ao34wPw+U", stat);
+	LIB_FUNC("BPE9s9vQQXo", mmap);
+	LIB_FUNC("UqDGjXA5yUM", munmap);
 
 	LIB_FUNC("OxhIB8LB-PQ", Posix::pthread_create);
 	LIB_FUNC("h9CcP3J0oVM", Posix::pthread_join);
@@ -532,6 +569,8 @@ LIB_DEFINE(InitLibKernel_1_Mem)
 	LIB_FUNC("BHouLQzh0X0", Memory::KernelDirectMemoryQuery);
 	LIB_FUNC("aNz11fnnzi4", Memory::KernelAvailableFlexibleMemorySize);
 	LIB_FUNC("vSMAm3cxYTY", Memory::KernelMprotect);
+	LIB_FUNC("BPE9s9vQQXo", Posix::mmap);
+	LIB_FUNC("UqDGjXA5yUM", Posix::munmap);
 }
 
 LIB_DEFINE(InitLibKernel_1_Equeue)
