@@ -616,9 +616,14 @@ void Elf64::Open(const String& file_name)
 	if (m_ehdr != nullptr /*&& m_self == nullptr*/)
 	{
 		m_phdr = load_phdr_64(*m_f, ehdr_pos + m_ehdr->e_phoff, m_ehdr->e_phnum);
-		m_shdr = load_shdr_64(*m_f, ehdr_pos + m_ehdr->e_shoff, m_ehdr->e_shnum);
 
-		EXIT_NOT_IMPLEMENTED(m_shdr != nullptr && m_self != nullptr);
+		// Section header offsets are relative to the embedded ELF layout and are not
+		// translated through the SELF segment mapping; the runtime linker only needs
+		// phdrs and PT_OS_DYNLIBDATA, so treat SELF-wrapped files as section-less.
+		if (m_self == nullptr)
+		{
+			m_shdr = load_shdr_64(*m_f, ehdr_pos + m_ehdr->e_shoff, m_ehdr->e_shnum);
+		}
 
 		if (m_shdr != nullptr)
 		{
