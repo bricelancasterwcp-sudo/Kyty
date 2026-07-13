@@ -1,28 +1,61 @@
-[![Build status](https://ci.appveyor.com/api/projects/status/0du32fg9flol63to?svg=true)](https://ci.appveyor.com/project/InoriRus/kyty) [![CI](https://github.com/InoriRus/Kyty/actions/workflows/ci.yml/badge.svg)](https://github.com/InoriRus/Kyty/actions/workflows/ci.yml)
+[![Linux CI](https://github.com/bricelancasterwcp-sudo/Kyty/actions/workflows/linux.yml/badge.svg)](https://github.com/bricelancasterwcp-sudo/Kyty/actions/workflows/linux.yml)
 
-# Kyty
+# Kyty — Linux port
 ## PS4 & PS5 emulator
 
----
-The project is in its early stage.
-
-[Vladimir M](mailto:inorirus@gmail.com)
-
-Licensed under the MIT license.
+This fork ports [InoriRus/Kyty](https://github.com/InoriRus/Kyty) to Linux and continues development from where upstream stopped (October 2022). The original emulator, by [Vladimir M](mailto:inorirus@gmail.com), is licensed under the MIT license; so is this fork.
 
 ---
-It is possible to run some simple games for PS4 and homebrews for PS5
+### Linux port status
 
-There maybe graphics glitches, crashes, freezes and low FPS. It's OK for now.
+Verified on Ubuntu (gcc 13+, X11/XWayland, Vulkan on NVIDIA), using homebrew built with the open-source [OpenOrbis PS4 Toolchain](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain):
 
-Features that are not implemented:
-- Audio input/output
-- MP4 video
-- Network
-- Multi-user
+| Smoke tier | Exercises | Result |
+| --- | --- | --- |
+| `hello_world` | ELF load, dynamic linking, native execution, HLE kernel | runs |
+| `graphics` | VideoOut, Vulkan present, linear framebuffers | runs (~60 fps) |
+| `input` | controller, PNG asset loading, `readv` | runs |
+| `SDL2` | threads, TTF text via FreeType, textures, full game loop | runs (~60 fps)¹ |
 
-Path to Savedata folder is hardcoded and can't be configured.
-System parameters (language, date format, etc.) are also hardcoded.
+¹ Currently needs `KYTY_PERMISSIVE=1` (below) to stub the remaining unregistered POSIX libc calls; core rendering, threading and fonts are real.
+
+Audio (`sceAudioOut`), MP4 video, and networking are not implemented on this fork yet.
+
+### Notable fixes in this fork
+
+- **Builds on Ubuntu** — the Qt launcher and warnings-as-errors are now optional CMake flags, so the emulator core compiles cleanly with modern gcc.
+- **TLS instruction patcher** handles the `data16` (`0x66`) prefixes clang emits; without this, any guest thread-local access corrupted the host thread and crashed. This unblocks essentially all real (TLS-using) code.
+- **FreeType bridge** — guest FreeType calls are forwarded to the host `libfreetype`, enabling TTF text rendering.
+- **`gettimeofday`** now has real sub-second precision (was whole-second, which froze `SDL_GetTicks` and crashed frame-rate math).
+- Guest allocations are kept below 2^44 to match the GPU memory tracker; the crash reporter's stack walker is bounded to the real thread stack; `posix` mmap/readv/writev/open/close/lseek and `scePad` handle functions implemented.
+
+### Building on Linux
+
+```bash
+sudo apt-get install -y cmake gcc g++ make libfreetype-dev libvulkan-dev \
+  libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev
+
+cmake -B _Build/gcc -G "Unix Makefiles" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+  -DKYTY_BUILD_LAUNCHER=OFF \
+  -DKYTY_WARNINGS_ARE_ERRORS=OFF \
+  source
+cmake --build _Build/gcc -j"$(nproc)" --target fc_script
+```
+
+### Running
+
+`fc_script` is the emulator, driven by a Lua config that mounts a game directory and loads its modules. Ready-made smoke configs live in [`_smoke/`](_smoke).
+
+```bash
+# Point the mount paths in _smoke/*.lua at your built OpenOrbis sample first.
+KYTY_PERMISSIVE=1 ./_Build/gcc/fc_script _smoke/smoke_sdl2.lua
+```
+
+`KYTY_PERMISSIVE=1` resolves not-yet-implemented imports to a no-op returning 0, so a title can boot past non-critical calls while the gaps are filled in. This fork does **not** include or require any copyrighted PS4/PS5 firmware or games — all testing uses homebrew built from the open OpenOrbis toolchain.
+
+The original project's Windows build and documentation follow below, unchanged.
 
 ---
 ### Screenshots
