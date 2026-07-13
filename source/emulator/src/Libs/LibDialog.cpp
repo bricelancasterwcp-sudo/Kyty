@@ -35,10 +35,29 @@ LIB_DEFINE(InitDialog_1_SaveDataDialog)
 
 } // namespace LibSaveDataDialog
 
+namespace LibMsgDialog {
+
+LIB_VERSION("MsgDialog", 1, "MsgDialog", 1, 1);
+
+namespace MsgDialog = Dialog::MsgDialog;
+
+LIB_DEFINE(InitDialog_1_MsgDialog)
+{
+	LIB_FUNC("lDqxaY1UbEo", MsgDialog::MsgDialogInitialize);
+	LIB_FUNC("b06Hh0DPEaE", MsgDialog::MsgDialogOpen);
+	LIB_FUNC("6fIC3XKt2k0", MsgDialog::MsgDialogUpdateStatus);
+	LIB_FUNC("HTrcDKlFKuM", MsgDialog::MsgDialogClose);
+	LIB_FUNC("Lr8ovHH9l6A", MsgDialog::MsgDialogGetResult);
+	LIB_FUNC("ePw-kqZmelo", MsgDialog::MsgDialogTerminate);
+}
+
+} // namespace LibMsgDialog
+
 LIB_DEFINE(InitDialog_1)
 {
 	LibCommonDialog::InitDialog_1_CommonDialog(s);
 	LibSaveDataDialog::InitDialog_1_SaveDataDialog(s);
+	LibMsgDialog::InitDialog_1_MsgDialog(s);
 }
 
 } // namespace Kyty::Libs
