@@ -19,6 +19,10 @@ add_library(emulator STATIC ${emulator_src})
 
 target_link_libraries(emulator core math scripts lua unit_test vulkan-1 spirv-tools-opt spirv-tools easy_profiler SDL2-static)
 
+# Host FreeType, bridged for guest FreeType imports (see LibFreeType.cpp)
+find_package(Freetype REQUIRED)
+target_link_libraries(emulator ${FREETYPE_LIBRARIES})
+
 target_include_directories(emulator PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 get_property(inc_headers TARGET emulator PROPERTY INCLUDE_DIRECTORIES)
@@ -30,6 +34,7 @@ list(APPEND inc_headers
 	${CMAKE_SOURCE_DIR}/3rdparty/xxhash/include
 	${CMAKE_SOURCE_DIR}/3rdparty/cpuinfo/include
 	${CMAKE_SOURCE_DIR}/3rdparty/stb
+	${FREETYPE_INCLUDE_DIRS}
 )
 
 if (MSVC AND CLANG)
