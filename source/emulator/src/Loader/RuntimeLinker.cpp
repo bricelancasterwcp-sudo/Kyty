@@ -465,6 +465,14 @@ static void relocate(uint32_t index, Elf64_Rela* r, Program* program, bool jmpre
 		{
 			if (program->custom_call_plt_vaddr != 0)
 			{
+				// Surface every import we couldn't resolve up front (a whole
+				// program's missing HLE surface in one load) instead of only
+				// the first one hit at runtime. Gated behind the reloc-debug
+				// flag so normal runs stay quiet.
+				if (program->dbg_print_reloc)
+				{
+					printf("UNRESOLVED FUNC: %s\n", Log::RemoveColors(ri.name).C_Str());
+				}
 				EXIT_NOT_IMPLEMENTED(index >= program->custom_call_plt_num);
 				value = reinterpret_cast<Jit::CallPlt*>(program->custom_call_plt_vaddr)->GetAddr(index);
 			} else
