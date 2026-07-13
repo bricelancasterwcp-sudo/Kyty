@@ -564,8 +564,17 @@ static void PatchProgram(Program* program, uint64_t address, uint64_t size)
 		//   call <handler>
 		//   mov rax,rax
 		//   nop
-		// TODO() sometimes prefix 666666 is present
 		const uint8_t tls_pattern[9] = {0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00};
+
+		// clang pads this TLS access with up to three data16 (0x66) prefixes so
+		// it can be relaxed by a linker. The prefixes are part of the same
+		// instruction, so the CPU begins decoding there; if we only overwrite
+		// the 9-byte core with the call, the leftover 0x66 prefixes turn the
+		// injected `call rel32` into a `call rel16`, truncating the target and
+		// branching into garbage. Blank any leading prefixes with nops first.
+		constexpr uint8_t PREFIX_66  = 0x66;
+		constexpr uint8_t NOP        = 0x90;
+		constexpr int     MAX_PREFIX = 3;
 
 		EXIT_IF(Jit::Call9::GetSize() != sizeof(tls_pattern));
 
@@ -577,6 +586,13 @@ static void PatchProgram(Program* program, uint64_t address, uint64_t size)
 			if (memcmp(ptr, tls_pattern, sizeof(tls_pattern)) == 0)
 			{
 				printf("Patch tls at addr: [%016" PRIx64 "]\n", reinterpret_cast<uint64_t>(ptr));
+
+				// Blank the data16 prefixes in place; the call replaces the
+				// 9-byte core exactly where the mov was, so nothing trails it.
+				for (int k = 1; k <= MAX_PREFIX && ptr - k >= start_ptr && *(ptr - k) == PREFIX_66; k++)
+				{
+					*(ptr - k) = NOP;
+				}
 
 				auto* code = new (ptr) Jit::Call9;
 				code->SetFunc(program->tls.handler_vaddr);
