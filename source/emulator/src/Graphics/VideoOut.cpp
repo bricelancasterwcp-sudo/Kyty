@@ -964,7 +964,8 @@ KYTY_SYSV_ABI int VideoOutRegisterBuffers(int handle, int start_index, void* con
 	printf("\t option         = %" PRIu32 "\n", attribute->option);
 
 	// EXIT_NOT_IMPLEMENTED(attribute->pixel_format != 0x80000000);
-	EXIT_NOT_IMPLEMENTED(attribute->tiling_mode != 0);
+	// 0 = tiled, 1 = linear; both flow through register_buffers_internal's tile flag
+	EXIT_NOT_IMPLEMENTED(attribute->tiling_mode != 0 && attribute->tiling_mode != 1);
 	EXIT_NOT_IMPLEMENTED(attribute->aspect_ratio != 0);
 	EXIT_NOT_IMPLEMENTED(attribute->pitch_in_pixel != attribute->width);
 	EXIT_NOT_IMPLEMENTED(attribute->option != 0);
