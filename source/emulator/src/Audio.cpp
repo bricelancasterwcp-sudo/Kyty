@@ -5,11 +5,15 @@
 #include "Kyty/Core/MagicEnum.h"
 #include "Kyty/Core/String.h"
 #include "Kyty/Core/Threads.h"
+#include "Kyty/Core/Vector.h"
 
 #include "Emulator/Kernel/Pthread.h"
 #include "Emulator/Kernel/Semaphore.h"
 #include "Emulator/Libs/Errno.h"
 #include "Emulator/Libs/Libs.h"
+
+#include "SDL.h"
+#include "SDL_audio.h"
 
 #include <atomic>
 
@@ -92,6 +96,16 @@ private:
 		uint64_t last_output_time = 0;
 		int      channels_num     = 0;
 		int      volume[8]        = {};
+
+		SDL_AudioDeviceID device = 0;
+
+		[[nodiscard]] bool IsFloat() const
+		{
+			return (format == Format::FloatMono || format == Format::FloatStereo || format == Format::Float8Ch ||
+			        format == Format::Float8ChStd);
+		}
+
+		[[nodiscard]] uint32_t BlockBytes() const { return samples_num * channels_num * (IsFloat() ? 4 : 2); }
 	};
 
 	struct PortIn
@@ -107,6 +121,8 @@ private:
 	Core::Mutex m_mutex;
 	PortOut     m_out_ports[OUT_PORTS_MAX];
 	PortIn      m_in_ports[IN_PORTS_MAX];
+
+	static void QueueBlock(const PortOut& port, const void* data);
 };
 
 static Audio* g_audio = nullptr;
@@ -157,6 +173,37 @@ Audio::Id Audio::AudioOutOpen(int type, uint32_t samples_num, uint32_t freq, For
 				port.volume[i] = 32768;
 			}
 
+			// Bridge to a host audio device (Kyty already links SDL for
+			// windowing). A failed open falls back to the silent
+			// simulate-delay path, it does not fail the guest call.
+			if (SDL_WasInit(SDL_INIT_AUDIO) == 0 && SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
+			{
+				printf(FG_RED "\t can't init sdl audio: %s\n" FG_DEFAULT, SDL_GetError());
+			} else
+			{
+				SDL_AudioSpec want {};
+				want.freq     = static_cast<int>(freq);
+				want.format   = (port.IsFloat() ? AUDIO_F32SYS : AUDIO_S16SYS);
+				want.channels = static_cast<Uint8>(port.channels_num);
+				want.samples  = static_cast<Uint16>(samples_num);
+
+				// allowed_changes == 0 pins the app-side format to `want`; sdl
+				// converts to the hardware format internally, so the queued
+				// data and SDL_GetQueuedAudioSize() always use `want` units
+				SDL_AudioSpec have {};
+				port.device = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+
+				if (port.device == 0)
+				{
+					printf(FG_RED "\t can't open audio device: %s\n" FG_DEFAULT, SDL_GetError());
+				} else
+				{
+					printf("\t sdl audio: freq = %d, format = 0x%04x, channels = %u\n", have.freq,
+					       static_cast<unsigned>(have.format), static_cast<unsigned>(have.channels));
+					SDL_PauseAudioDevice(port.device, 0);
+				}
+			}
+
 			return Id::Create(id);
 		}
 	}
@@ -170,7 +217,15 @@ bool Audio::AudioOutClose(Id handle)
 
 	if (AudioOutValid(handle))
 	{
-		m_out_ports[handle.GetId()].used = false;
+		auto& port = m_out_ports[handle.GetId()];
+
+		if (port.device != 0)
+		{
+			SDL_CloseAudioDevice(port.device);
+			port.device = 0;
+		}
+
+		port.used = false;
 		return true;
 	}
 
@@ -253,20 +308,97 @@ uint32_t Audio::AudioOutOutputs(OutputParam* params, uint32_t num)
 
 	for (uint32_t i = 0; i < num; i++)
 	{
-		uint64_t next_time = m_out_ports[params[i].handle.GetId()].last_output_time + block_time;
+		auto& port = m_out_ports[params[i].handle.GetId()];
+
+		if (port.device != 0)
+		{
+			if (params[i].data != nullptr)
+			{
+				QueueBlock(port, params[i].data);
+			}
+			continue;
+		}
+
+		// No host device; simulate the audio delay as before
+		uint64_t next_time = port.last_output_time + block_time;
 		uint64_t wait_time = (next_time > current_time ? next_time - current_time : 0);
 		max_wait_time      = (wait_time > max_wait_time ? wait_time : max_wait_time);
 	}
 
-	// TODO(): Audio output is not yet implemented, so simulate audio delay
 	Core::Thread::SleepMicro(max_wait_time);
 
 	for (uint32_t i = 0; i < num; i++)
 	{
-		m_out_ports[params[i].handle.GetId()].last_output_time = LibKernel::KernelGetProcessTime();
+		auto& port = m_out_ports[params[i].handle.GetId()];
+
+		// Pace ports with a host device by actual playback: keep only a few
+		// blocks queued so timing drift self-corrects instead of accumulating
+		if (port.device != 0 && params[i].data != nullptr)
+		{
+			uint32_t high_water = 3 * port.BlockBytes();
+
+			while (SDL_GetQueuedAudioSize(port.device) > high_water)
+			{
+				Core::Thread::SleepMicro(1000);
+			}
+		}
+
+		port.last_output_time = LibKernel::KernelGetProcessTime();
 	}
 
 	return first_port.samples_num;
+}
+
+void Audio::QueueBlock(const PortOut& port, const void* data)
+{
+	uint32_t bytes = port.BlockBytes();
+
+	bool full_volume = true;
+	for (int c = 0; c < port.channels_num; c++)
+	{
+		full_volume = full_volume && (port.volume[c] == 32768);
+	}
+
+	if (full_volume)
+	{
+		SDL_QueueAudio(port.device, data, bytes);
+		return;
+	}
+
+	// Apply the per-channel port volume (0..32768) before queueing
+	Vector<uint8_t> scaled(bytes);
+
+	uint32_t frames = port.samples_num;
+
+	if (port.IsFloat())
+	{
+		const auto* src = static_cast<const float*>(data);
+		auto*       dst = reinterpret_cast<float*>(scaled.GetData());
+
+		for (uint32_t f = 0; f < frames; f++)
+		{
+			for (int c = 0; c < port.channels_num; c++)
+			{
+				dst[f * port.channels_num + c] =
+				    src[f * port.channels_num + c] * (static_cast<float>(port.volume[c]) / 32768.0f);
+			}
+		}
+	} else
+	{
+		const auto* src = static_cast<const int16_t*>(data);
+		auto*       dst = reinterpret_cast<int16_t*>(scaled.GetData());
+
+		for (uint32_t f = 0; f < frames; f++)
+		{
+			for (int c = 0; c < port.channels_num; c++)
+			{
+				dst[f * port.channels_num + c] =
+				    static_cast<int16_t>((static_cast<int32_t>(src[f * port.channels_num + c]) * port.volume[c]) >> 15);
+			}
+		}
+	}
+
+	SDL_QueueAudio(port.device, scaled.GetDataConst(), bytes);
 }
 
 Audio::Id Audio::AudioInOpen(uint32_t type, uint32_t samples_num, uint32_t freq, Format format)
