@@ -62,6 +62,7 @@ using PthreadKey        = int;
 using pthread_entry_func_t          = KYTY_SYSV_ABI void* (*)(void*);
 using thread_dtors_func_t           = KYTY_SYSV_ABI void (*)();
 using pthread_key_destructor_func_t = KYTY_SYSV_ABI void (*)(void*);
+using pthread_once_init_func_t      = KYTY_SYSV_ABI void (*)();
 
 void PthreadInitSelfForMainThread();
 void PthreadDeleteStaticObjects(Loader::Program* program);
@@ -96,6 +97,8 @@ int KYTY_SYSV_ABI     PthreadGetthreadid();
 int KYTY_SYSV_ABI          KernelUsleep(KernelUseconds microseconds);
 unsigned int KYTY_SYSV_ABI KernelSleep(unsigned int seconds);
 int KYTY_SYSV_ABI          KernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp);
+
+int KYTY_SYSV_ABI PthreadOnce(int* once_control, pthread_once_init_func_t init_routine);
 
 int KYTY_SYSV_ABI   PthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
 int KYTY_SYSV_ABI   PthreadKeyDelete(PthreadKey key);
@@ -183,6 +186,24 @@ int KYTY_SYSV_ABI   pthread_mutex_init(LibKernel::PthreadMutex* mutex, const Lib
 int KYTY_SYSV_ABI   pthread_mutexattr_init(LibKernel::PthreadMutexattr* attr);
 int KYTY_SYSV_ABI   pthread_mutexattr_settype(LibKernel::PthreadMutexattr* attr, int type);
 int KYTY_SYSV_ABI   pthread_mutexattr_destroy(LibKernel::PthreadMutexattr* attr);
+
+int KYTY_SYSV_ABI                pthread_detach(LibKernel::Pthread thread);
+int KYTY_SYSV_ABI                pthread_equal(LibKernel::Pthread thread1, LibKernel::Pthread thread2);
+LibKernel::Pthread KYTY_SYSV_ABI pthread_self();
+int KYTY_SYSV_ABI                pthread_once(int* once_control, LibKernel::pthread_once_init_func_t init_routine);
+int KYTY_SYSV_ABI                pthread_setcanceltype(int type, int* old_type);
+int KYTY_SYSV_ABI                pthread_cond_signal(LibKernel::PthreadCond* cond);
+int KYTY_SYSV_ABI pthread_cond_timedwait(LibKernel::PthreadCond* cond, LibKernel::PthreadMutex* mutex,
+                                         const LibKernel::KernelTimespec* abstime);
+int KYTY_SYSV_ABI pthread_cond_destroy(LibKernel::PthreadCond* cond);
+int KYTY_SYSV_ABI pthread_attr_init(LibKernel::PthreadAttr* attr);
+int KYTY_SYSV_ABI pthread_attr_setstacksize(LibKernel::PthreadAttr* attr, size_t stack_size);
+int KYTY_SYSV_ABI pthread_attr_setdetachstate(LibKernel::PthreadAttr* attr, int state);
+int KYTY_SYSV_ABI pthread_getschedparam(LibKernel::Pthread thread, int* policy, LibKernel::KernelSchedParam* param);
+int KYTY_SYSV_ABI pthread_setschedparam(LibKernel::Pthread thread, int policy, const LibKernel::KernelSchedParam* param);
+int KYTY_SYSV_ABI sched_yield();
+int KYTY_SYSV_ABI sched_get_priority_max(int policy);
+int KYTY_SYSV_ABI sched_get_priority_min(int policy);
 
 } // namespace Posix
 

@@ -376,4 +376,143 @@ int KYTY_SYSV_ABI KernelCancelSema(KernelSema sem, int count, int* threads)
 
 } // namespace Kyty::Libs::LibKernel::Semaphore
 
+namespace Kyty::Libs::Posix {
+
+LIB_NAME("Posix", "libkernel");
+
+// Host-backed counting semaphore. Kyty runs the guest natively in-process,
+// so the guest's sem_t slot just stores a pointer to this object.
+struct PosixSemPrivate
+{
+	Core::Mutex   mutex;
+	Core::CondVar cond;
+	int           count = 0;
+};
+
+int KYTY_SYSV_ABI sem_init(PosixSem* sem, int pshared, unsigned int value)
+{
+	PRINT_NAME();
+
+	EXIT_NOT_IMPLEMENTED(pshared != 0);
+
+	if (sem == nullptr)
+	{
+		*GetErrorAddr() = POSIX_EINVAL;
+		return -1;
+	}
+
+	auto* s  = new PosixSemPrivate;
+	s->count = static_cast<int>(value);
+
+	*sem = s;
+
+	return 0;
+}
+
+int KYTY_SYSV_ABI sem_destroy(PosixSem* sem)
+{
+	PRINT_NAME();
+
+	if (sem == nullptr || *sem == nullptr)
+	{
+		*GetErrorAddr() = POSIX_EINVAL;
+		return -1;
+	}
+
+	delete *sem;
+	*sem = nullptr;
+
+	return 0;
+}
+
+int KYTY_SYSV_ABI sem_wait(PosixSem* sem)
+{
+	// PRINT_NAME();
+
+	if (sem == nullptr || *sem == nullptr)
+	{
+		*GetErrorAddr() = POSIX_EINVAL;
+		return -1;
+	}
+
+	auto* s = *sem;
+
+	Core::LockGuard lock(s->mutex);
+
+	while (s->count <= 0)
+	{
+		s->cond.Wait(&s->mutex);
+	}
+
+	s->count--;
+
+	return 0;
+}
+
+int KYTY_SYSV_ABI sem_trywait(PosixSem* sem)
+{
+	// PRINT_NAME();
+
+	if (sem == nullptr || *sem == nullptr)
+	{
+		*GetErrorAddr() = POSIX_EINVAL;
+		return -1;
+	}
+
+	auto* s = *sem;
+
+	Core::LockGuard lock(s->mutex);
+
+	if (s->count <= 0)
+	{
+		*GetErrorAddr() = POSIX_EAGAIN;
+		return -1;
+	}
+
+	s->count--;
+
+	return 0;
+}
+
+int KYTY_SYSV_ABI sem_post(PosixSem* sem)
+{
+	// PRINT_NAME();
+
+	if (sem == nullptr || *sem == nullptr)
+	{
+		*GetErrorAddr() = POSIX_EINVAL;
+		return -1;
+	}
+
+	auto* s = *sem;
+
+	Core::LockGuard lock(s->mutex);
+
+	s->count++;
+	s->cond.Signal();
+
+	return 0;
+}
+
+int KYTY_SYSV_ABI sem_getvalue(PosixSem* sem, int* sval)
+{
+	// PRINT_NAME();
+
+	if (sem == nullptr || *sem == nullptr || sval == nullptr)
+	{
+		*GetErrorAddr() = POSIX_EINVAL;
+		return -1;
+	}
+
+	auto* s = *sem;
+
+	Core::LockGuard lock(s->mutex);
+
+	*sval = s->count;
+
+	return 0;
+}
+
+} // namespace Kyty::Libs::Posix
+
 #endif

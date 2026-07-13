@@ -1033,6 +1033,63 @@ KYTY_SYSV_ABI int VideoOutRegisterBuffers2(int handle, int set_index, int buffer
 	return register_buffers_internal(ctx, set_index, buffer_index_start, addresses.GetDataConst(), buffer_num, nullptr, attribute);
 }
 
+KYTY_SYSV_ABI int VideoOutUnregisterBuffers(int handle, int attribute_index)
+{
+	PRINT_NAME();
+
+	EXIT_IF(g_video_out_context == nullptr);
+
+	auto* ctx = g_video_out_context->Get(handle);
+
+	printf("\t attribute_index = %d\n", attribute_index);
+
+	bool found = false;
+
+	for (uint32_t i = 0; i < ctx->buffers_sets.Size(); i++)
+	{
+		if (ctx->buffers_sets.At(i).set_id == attribute_index)
+		{
+			ctx->buffers_sets.RemoveAt(i);
+			found = true;
+			break;
+		}
+	}
+
+	if (!found)
+	{
+		return VIDEO_OUT_ERROR_INVALID_VALUE;
+	}
+
+	// The vulkan objects stay in the GpuMemory cache (keyed by address), same
+	// as VideoOutContext::Close(); only the slots are released here
+	for (auto& buffer: ctx->buffers)
+	{
+		if (buffer.buffer != nullptr && buffer.set_id == attribute_index)
+		{
+			buffer.buffer        = nullptr;
+			buffer.buffer_vulkan = nullptr;
+			buffer.buffer_size   = 0;
+			buffer.set_id        = 0;
+		}
+	}
+
+	return OK;
+}
+
+KYTY_SYSV_ABI int VideoOutIsFlipPending(int handle)
+{
+	PRINT_NAME();
+
+	EXIT_IF(g_video_out_context == nullptr);
+
+	auto* ctx = g_video_out_context->Get(handle);
+
+	VideoOutFlipStatus status {};
+	g_video_out_context->GetFlipQueue().GetFlipStatus(ctx, &status);
+
+	return status.flipPendingNum;
+}
+
 VideoOutBufferImageInfo VideoOutGetImage(uint64_t addr)
 {
 	EXIT_IF(g_video_out_context == nullptr);

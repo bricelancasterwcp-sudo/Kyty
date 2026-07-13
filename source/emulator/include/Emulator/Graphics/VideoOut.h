@@ -50,8 +50,10 @@ KYTY_SYSV_ABI int  VideoOutRegisterBuffers(int handle, int start_index, void* co
                                            const VideoOutBufferAttribute* attribute);
 KYTY_SYSV_ABI int  VideoOutRegisterBuffers2(int handle, int set_index, int buffer_index_start, const VideoOutBuffers* buffers,
                                             int buffer_num, const VideoOutBufferAttribute2* attribute, int category, void* option);
+KYTY_SYSV_ABI int  VideoOutUnregisterBuffers(int handle, int attribute_index);
 KYTY_SYSV_ABI int  VideoOutSubmitFlip(int handle, int index, int flip_mode, int64_t flip_arg);
 KYTY_SYSV_ABI int  VideoOutGetFlipStatus(int handle, VideoOutFlipStatus* status);
+KYTY_SYSV_ABI int  VideoOutIsFlipPending(int handle);
 KYTY_SYSV_ABI int  VideoOutGetVblankStatus(int handle, VideoOutVblankStatus* status);
 KYTY_SYSV_ABI int  VideoOutSetWindowModeMargins(int handle, int top, int bottom);
 

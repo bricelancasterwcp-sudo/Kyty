@@ -18,6 +18,7 @@
 #include "Emulator/Loader/SymbolDatabase.h"
 
 #include <cstdlib>
+#include <cstring>
 
 #ifdef KYTY_EMU_ENABLED
 
@@ -131,6 +132,142 @@ static KYTY_SYSV_ABI int sigprocmask(int /*how*/, const void* /*set*/, void* /*o
 	// printf("\t oset = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(oset));
 
 	return 0;
+}
+
+static KYTY_SYSV_ABI int raise(int sig)
+{
+	PRINT_NAME();
+
+	printf("\t sig = %d\n", sig);
+
+	// Signals are not delivered to the guest; pretend the call succeeded
+	return 0;
+}
+
+static KYTY_SYSV_ABI int sigaction(int sig, const void* act, void* oldact)
+{
+	PRINT_NAME();
+
+	printf("\t sig = %d\n", sig);
+	printf("\t act = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(act));
+
+	if (oldact != nullptr)
+	{
+		// All zeroes = SIG_DFL handler, no flags, empty mask (FreeBSD layout, 32 bytes)
+		std::memset(oldact, 0, 32);
+	}
+
+	return 0;
+}
+
+static KYTY_SYSV_ABI int getrusage(int who, void* usage)
+{
+	PRINT_NAME();
+
+	printf("\t who = %d\n", who);
+
+	if (usage == nullptr)
+	{
+		*Posix::GetErrorAddr() = Posix::POSIX_EFAULT;
+		return -1;
+	}
+
+	// No per-process accounting; report zero usage (FreeBSD struct rusage, 144 bytes)
+	std::memset(usage, 0, 144);
+
+	return 0;
+}
+
+static KYTY_SYSV_ABI int madvise(void* addr, size_t len, int behav)
+{
+	PRINT_NAME();
+
+	printf("\t addr  = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(addr));
+	printf("\t len   = %" PRIu64 "\n", len);
+	printf("\t behav = %d\n", behav);
+
+	// Advice only; safe to ignore
+	return 0;
+}
+
+struct KernelPollfd
+{
+	int   fd;
+	short events;
+	short revents;
+};
+
+static KYTY_SYSV_ABI int poll(KernelPollfd* fds, unsigned int nfds, int timeout)
+{
+	PRINT_NAME();
+
+	printf("\t nfds    = %u\n", nfds);
+	printf("\t timeout = %d\n", timeout);
+
+	// Guest descriptors are emulator handles, not host fds, so there is
+	// nothing to poll natively. Report "no events ready" after honoring the
+	// timeout so callers see an ordinary timeout instead of a busy spin.
+	if (fds != nullptr)
+	{
+		for (unsigned int i = 0; i < nfds; i++)
+		{
+			fds[i].revents = 0;
+		}
+	}
+
+	if (timeout > 0)
+	{
+		LibKernel::KernelUsleep(static_cast<KernelUseconds>(timeout) * 1000u);
+	}
+
+	return 0;
+}
+
+static KYTY_SYSV_ABI int fcntl(int fd, int cmd, void* arg)
+{
+	PRINT_NAME();
+
+	printf("\t fd  = %d\n", fd);
+	printf("\t cmd = %d\n", cmd);
+	printf("\t arg = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(arg));
+
+	// File locking / descriptor flags are not modeled; pretend success
+	return 0;
+}
+
+static KYTY_SYSV_ABI int ioctl(int fd, uint64_t request, void* argp)
+{
+	PRINT_NAME();
+
+	printf("\t fd      = %d\n", fd);
+	printf("\t request = %016" PRIx64 "\n", request);
+	printf("\t argp    = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(argp));
+
+	// Device controls are not modeled; pretend success
+	return 0;
+}
+
+static KYTY_SYSV_ABI int64_t sysconf(int name)
+{
+	PRINT_NAME();
+
+	printf("\t name = %d\n", name);
+
+	// FreeBSD name values
+	constexpr int SC_PAGESIZE         = 47;
+	constexpr int SC_NPROCESSORS_CONF = 57;
+	constexpr int SC_NPROCESSORS_ONLN = 58;
+
+	switch (name)
+	{
+		case SC_PAGESIZE: return 0x4000; // 16 KiB
+		case SC_NPROCESSORS_CONF:
+		case SC_NPROCESSORS_ONLN: return 7; // cores available to a title
+		default: break;
+	}
+
+	*Posix::GetErrorAddr() = Posix::POSIX_EINVAL;
+	return -1;
 }
 
 static KYTY_SYSV_ABI KernelModule KernelLoadStartModule(const char* module_file_name, size_t args, const void* argp, uint32_t flags,
@@ -550,6 +687,13 @@ int KYTY_SYSV_ABI gettimeofday(LibKernel::KernelTimeval* tp, void* /*tz*/)
 	return POSIX_CALL(LibKernel::KernelGettimeofday(tp));
 }
 
+int KYTY_SYSV_ABI fstat(int d, LibKernel::FileSystem::FileStat* sb)
+{
+	PRINT_NAME();
+
+	return POSIX_CALL(LibKernel::FileSystem::KernelFstat(d, sb));
+}
+
 LIB_DEFINE(InitLibKernel_1_Posix)
 {
 	LIB_FUNC("lLMT9vJAck0", clock_gettime);
@@ -606,6 +750,7 @@ LIB_DEFINE(InitLibKernel_1_FS)
 	LIB_FUNC("FN4gaPmuFV8", Posix::write);
 	LIB_FUNC("j2AIqSqJP0w", FileSystem::KernelGetdents);
 	LIB_FUNC("1-LFLmRFxxM", FileSystem::KernelMkdir);
+	LIB_FUNC("mqQMh1zPPT8", Posix::fstat);
 }
 
 LIB_DEFINE(InitLibKernel_1_Mem)
@@ -648,6 +793,14 @@ LIB_DEFINE(InitLibKernel_1_Semaphore)
 	LIB_FUNC("R1Jvn8bSCW8", Semaphore::KernelDeleteSema);
 	LIB_FUNC("Zxa0VhQVTsk", Semaphore::KernelWaitSema);
 	LIB_FUNC("4czppHBiriw", Semaphore::KernelSignalSema);
+
+	// Unnamed posix semaphores, imported under libkernel (used by SDL)
+	LIB_FUNC("pDuPEf3m4fI", Posix::sem_init);
+	LIB_FUNC("cDW233RAwWo", Posix::sem_destroy);
+	LIB_FUNC("YCV5dGGBcCo", Posix::sem_wait);
+	LIB_FUNC("WBWzsRifCEA", Posix::sem_trywait);
+	LIB_FUNC("IKP8typ0QUk", Posix::sem_post);
+	LIB_FUNC("Bq+LRV-N6Hk", Posix::sem_getvalue);
 }
 
 LIB_DEFINE(InitLibKernel_1_Pthread)
@@ -733,6 +886,27 @@ LIB_DEFINE(InitLibKernel_1_Pthread)
 	LIB_FUNC("WrOLvHU0yQM", Posix::pthread_setspecific);
 	LIB_FUNC("0-KXaS70xy4", Posix::pthread_getspecific);
 	LIB_FUNC("n88vx3C5nW8", Posix::gettimeofday);
+
+	LIB_FUNC("+U1R4WtXvoc", Posix::pthread_detach);
+	LIB_FUNC("7Xl257M4VNI", Posix::pthread_equal);
+	LIB_FUNC("EotR8a3ASf4", Posix::pthread_self);
+	LIB_FUNC("Z4QosVuAsA0", Posix::pthread_once);
+	LIB_FUNC("2dEhvvjlq30", Posix::pthread_setcanceltype);
+	LIB_FUNC("2MOy+rUfuhQ", Posix::pthread_cond_signal);
+	LIB_FUNC("27bAgiJmOh0", Posix::pthread_cond_timedwait);
+	LIB_FUNC("RXXqi4CtF8w", Posix::pthread_cond_destroy);
+	LIB_FUNC("wtkt-teR1so", Posix::pthread_attr_init);
+	LIB_FUNC("2Q0z6rnBrTE", Posix::pthread_attr_setstacksize);
+	LIB_FUNC("E+tyo3lp5Lw", Posix::pthread_attr_setdetachstate);
+	LIB_FUNC("FIs3-UQT9sg", Posix::pthread_getschedparam);
+	LIB_FUNC("Xs9hdiD7sAA", Posix::pthread_setschedparam);
+	LIB_FUNC("iGjsr1WAtI0", Posix::pthread_rwlock_rdlock);
+	LIB_FUNC("EgmLo6EWgso", Posix::pthread_rwlock_unlock);
+	LIB_FUNC("sIlRvQqsN2Y", Posix::pthread_rwlock_wrlock);
+	LIB_FUNC("6XG4B33N09g", Posix::sched_yield);
+	LIB_FUNC("CBNtXOoef-E", Posix::sched_get_priority_max);
+	LIB_FUNC("m0iS6jNsXds", Posix::sched_get_priority_min);
+	LIB_FUNC("yS8U2TGCe1A", Posix::nanosleep);
 }
 
 LIB_DEFINE(InitLibKernel_1)
@@ -751,6 +925,15 @@ LIB_DEFINE(InitLibKernel_1)
 	LIB_FUNC("1jfXLRVzisc", LibKernel::KernelUsleep);
 	LIB_FUNC("6c3rCVE-fTU", LibKernel::open);
 	LIB_FUNC("6xVpy0Fdq+I", LibKernel::sigprocmask);
+	LIB_FUNC("aPcyptbOiZs", LibKernel::sigprocmask);
+	LIB_FUNC("0t0-MxQNwK4", LibKernel::raise);
+	LIB_FUNC("KiJEPEWRyUY", LibKernel::sigaction);
+	LIB_FUNC("hHlZQUnlxSM", LibKernel::getrusage);
+	LIB_FUNC("Jahsnh4KKkg", LibKernel::madvise);
+	LIB_FUNC("ku7D4q1Y9PI", LibKernel::poll);
+	LIB_FUNC("t0fXUzq61Z4", LibKernel::fcntl);
+	LIB_FUNC("wW+k21cmbwQ", LibKernel::ioctl);
+	LIB_FUNC("mkawd0NA9ts", LibKernel::sysconf);
 	LIB_FUNC("6Z83sYWFlA8", LibKernel::exit);
 	LIB_FUNC("8OnWXlgQlvo", LibKernel::KernelRtldThreadAtexitDecrement);
 	LIB_FUNC("959qrazPIrg", LibKernel::KernelGetProcParam);

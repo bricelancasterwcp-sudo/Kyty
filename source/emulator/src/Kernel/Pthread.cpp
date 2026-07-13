@@ -2268,6 +2268,33 @@ int KYTY_SYSV_ABI PthreadEqual(Pthread thread1, Pthread thread2)
 	return (thread1 == thread2 ? 1 : 0);
 }
 
+int KYTY_SYSV_ABI PthreadOnce(int* once_control, pthread_once_init_func_t init_routine)
+{
+	PRINT_NAME();
+
+	if (once_control == nullptr || init_routine == nullptr)
+	{
+		return KERNEL_ERROR_EINVAL;
+	}
+
+	// The guest pthread_once_t starts with the state int (FreeBSD layout:
+	// 0 = needs init, 1 = done). One host mutex serializes all controls;
+	// init routines are rare and short, so contention is not a concern.
+	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+	pthread_mutex_lock(&mutex);
+
+	if (*once_control == 0)
+	{
+		init_routine();
+		*once_control = 1;
+	}
+
+	pthread_mutex_unlock(&mutex);
+
+	return OK;
+}
+
 int KYTY_SYSV_ABI PthreadGetname(Pthread thread, char* name)
 {
 	PRINT_NAME();
@@ -2702,6 +2729,190 @@ int KYTY_SYSV_ABI pthread_mutexattr_destroy(LibKernel::PthreadMutexattr* attr)
 	PRINT_NAME();
 
 	return POSIX_PTHREAD_CALL(LibKernel::PthreadMutexattrDestroy(attr));
+}
+
+int KYTY_SYSV_ABI pthread_detach(LibKernel::Pthread thread)
+{
+	PRINT_NAME();
+
+	return POSIX_PTHREAD_CALL(LibKernel::PthreadDetach(thread));
+}
+
+int KYTY_SYSV_ABI pthread_equal(LibKernel::Pthread thread1, LibKernel::Pthread thread2)
+{
+	// PRINT_NAME();
+
+	return LibKernel::PthreadEqual(thread1, thread2);
+}
+
+LibKernel::Pthread KYTY_SYSV_ABI pthread_self()
+{
+	// PRINT_NAME();
+
+	return LibKernel::PthreadSelf();
+}
+
+int KYTY_SYSV_ABI pthread_once(int* once_control, LibKernel::pthread_once_init_func_t init_routine)
+{
+	PRINT_NAME();
+
+	return POSIX_PTHREAD_CALL(LibKernel::PthreadOnce(once_control, init_routine));
+}
+
+int KYTY_SYSV_ABI pthread_setcanceltype(int type, int* old_type)
+{
+	PRINT_NAME();
+
+	// The posix entry point allows a null old_type; the sce implementation
+	// dereferences it unconditionally
+	int old = 0;
+
+	int result = POSIX_PTHREAD_CALL(LibKernel::PthreadSetcanceltype(type, &old));
+
+	if (old_type != nullptr)
+	{
+		*old_type = old;
+	}
+
+	return result;
+}
+
+int KYTY_SYSV_ABI pthread_cond_signal(LibKernel::PthreadCond* cond)
+{
+	PRINT_NAME();
+
+	EXIT_IF(LibKernel::g_pthread_context == nullptr);
+
+	auto* pthread_static_objects = LibKernel::g_pthread_context->GetPthreadStaticObjects();
+
+	EXIT_IF(pthread_static_objects == nullptr);
+
+	cond = static_cast<LibKernel::PthreadCond*>(
+	    pthread_static_objects->CreateObject(cond, LibKernel::PthreadStaticObject::Type::Cond));
+
+	return POSIX_PTHREAD_CALL(LibKernel::PthreadCondSignal(cond));
+}
+
+int KYTY_SYSV_ABI pthread_cond_timedwait(LibKernel::PthreadCond* cond, LibKernel::PthreadMutex* mutex,
+                                         const LibKernel::KernelTimespec* abstime)
+{
+	PRINT_NAME();
+
+	if (abstime == nullptr)
+	{
+		return Posix::POSIX_EINVAL;
+	}
+
+	EXIT_IF(LibKernel::g_pthread_context == nullptr);
+
+	auto* pthread_static_objects = LibKernel::g_pthread_context->GetPthreadStaticObjects();
+
+	EXIT_IF(pthread_static_objects == nullptr);
+
+	cond = static_cast<LibKernel::PthreadCond*>(
+	    pthread_static_objects->CreateObject(cond, LibKernel::PthreadStaticObject::Type::Cond));
+	mutex = static_cast<LibKernel::PthreadMutex*>(
+	    pthread_static_objects->CreateObject(mutex, LibKernel::PthreadStaticObject::Type::Mutex));
+
+	// The sce entry point takes a relative timeout in microseconds; posix
+	// passes an absolute CLOCK_REALTIME deadline
+	LibKernel::KernelTimeval now {};
+	LibKernel::KernelGettimeofday(&now);
+
+	int64_t rel_usec = (abstime->tv_sec - now.tv_sec) * 1000000 + (abstime->tv_nsec / 1000 - now.tv_usec);
+
+	if (rel_usec < 0)
+	{
+		rel_usec = 0;
+	}
+
+	return POSIX_PTHREAD_CALL(LibKernel::PthreadCondTimedwait(cond, mutex, static_cast<LibKernel::KernelUseconds>(rel_usec)));
+}
+
+int KYTY_SYSV_ABI pthread_cond_destroy(LibKernel::PthreadCond* cond)
+{
+	PRINT_NAME();
+
+	return POSIX_PTHREAD_CALL(LibKernel::PthreadCondDestroy(cond));
+}
+
+int KYTY_SYSV_ABI pthread_attr_init(LibKernel::PthreadAttr* attr)
+{
+	PRINT_NAME();
+
+	return POSIX_PTHREAD_CALL(LibKernel::PthreadAttrInit(attr));
+}
+
+int KYTY_SYSV_ABI pthread_attr_setstacksize(LibKernel::PthreadAttr* attr, size_t stack_size)
+{
+	PRINT_NAME();
+
+	return POSIX_PTHREAD_CALL(LibKernel::PthreadAttrSetstacksize(attr, stack_size));
+}
+
+int KYTY_SYSV_ABI pthread_attr_setdetachstate(LibKernel::PthreadAttr* attr, int state)
+{
+	PRINT_NAME();
+
+	// posix and sce use the same values (0 = joinable, 1 = detached)
+	return POSIX_PTHREAD_CALL(LibKernel::PthreadAttrSetdetachstate(attr, state));
+}
+
+int KYTY_SYSV_ABI pthread_getschedparam(LibKernel::Pthread thread, int* policy, LibKernel::KernelSchedParam* param)
+{
+	PRINT_NAME();
+
+	if (policy == nullptr || param == nullptr)
+	{
+		return Posix::POSIX_EINVAL;
+	}
+
+	int prio = 0;
+
+	int result = POSIX_PTHREAD_CALL(LibKernel::PthreadGetprio(thread, &prio));
+
+	if (result == 0)
+	{
+		*policy               = 1; // SCHED_FIFO, the sce default
+		param->sched_priority = prio;
+	}
+
+	return result;
+}
+
+int KYTY_SYSV_ABI pthread_setschedparam(LibKernel::Pthread thread, int /*policy*/, const LibKernel::KernelSchedParam* param)
+{
+	PRINT_NAME();
+
+	if (param == nullptr)
+	{
+		return Posix::POSIX_EINVAL;
+	}
+
+	return POSIX_PTHREAD_CALL(LibKernel::PthreadSetprio(thread, param->sched_priority));
+}
+
+int KYTY_SYSV_ABI sched_yield()
+{
+	// PRINT_NAME();
+
+	LibKernel::PthreadYield();
+
+	return 0;
+}
+
+int KYTY_SYSV_ABI sched_get_priority_max(int /*policy*/)
+{
+	PRINT_NAME();
+
+	return 767; // lowest-urgency sce priority value; the sce range is [256, 767]
+}
+
+int KYTY_SYSV_ABI sched_get_priority_min(int /*policy*/)
+{
+	PRINT_NAME();
+
+	return 256;
 }
 
 } // namespace Posix

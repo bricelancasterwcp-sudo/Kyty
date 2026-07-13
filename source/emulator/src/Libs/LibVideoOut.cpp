@@ -23,8 +23,10 @@ LIB_DEFINE(InitVideoOut_1)
 	LIB_FUNC("HXzjK9yI30k", VideoOut::VideoOutAddFlipEvent);
 	LIB_FUNC("Xru92wHJRmg", VideoOut::VideoOutAddVblankEvent);
 	LIB_FUNC("w3BY+tAEiQY", VideoOut::VideoOutRegisterBuffers);
+	LIB_FUNC("N5KDtkIjjJ4", VideoOut::VideoOutUnregisterBuffers);
 	LIB_FUNC("U46NwOiJpys", VideoOut::VideoOutSubmitFlip);
 	LIB_FUNC("SbU3dwp80lQ", VideoOut::VideoOutGetFlipStatus);
+	LIB_FUNC("zgXifHT9ErY", VideoOut::VideoOutIsFlipPending);
 	LIB_FUNC("1FZBKy8HeNU", VideoOut::VideoOutGetVblankStatus);
 	LIB_FUNC("MTxxrOCeSig", VideoOut::VideoOutSetWindowModeMargins);
 }
@@ -51,8 +53,10 @@ LIB_DEFINE(InitVideoOut_1)
 	LIB_FUNC("HXzjK9yI30k", VideoOut::VideoOutAddFlipEvent);
 	LIB_FUNC("Xru92wHJRmg", VideoOut::VideoOutAddVblankEvent);
 	LIB_FUNC("w3BY+tAEiQY", VideoOut::VideoOutRegisterBuffers);
+	LIB_FUNC("N5KDtkIjjJ4", VideoOut::VideoOutUnregisterBuffers);
 	LIB_FUNC("U46NwOiJpys", VideoOut::VideoOutSubmitFlip);
 	LIB_FUNC("SbU3dwp80lQ", VideoOut::VideoOutGetFlipStatus);
+	LIB_FUNC("zgXifHT9ErY", VideoOut::VideoOutIsFlipPending);
 	LIB_FUNC("1FZBKy8HeNU", VideoOut::VideoOutGetVblankStatus);
 	LIB_FUNC("MTxxrOCeSig", VideoOut::VideoOutSetWindowModeMargins);
 }
