@@ -17,7 +17,7 @@ local cfg = {
 
 kyty_init(cfg);
 
-kyty_mount('/tmp/claude-1000/-home-brice/e3bdfbc6-ed39-4f6e-ad6a-b2588420bb1a/scratchpad/openorbis/OpenOrbis/PS4Toolchain/samples/SDL2', '/app0');
+kyty_mount('/home/brice/Projects/kyty-assets/openorbis/OpenOrbis/PS4Toolchain/samples/SDL2', '/app0');
 
 kyty_load_elf('/app0/SDL2/x64/Debug/SDL2.oelf');
 kyty_load_elf('/app0/sce_module/libc.prx', 0);
