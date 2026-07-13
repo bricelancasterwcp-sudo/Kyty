@@ -407,6 +407,27 @@ int KYTY_SYSV_ABI PadOpen(int user_id, int type, int index, const void* param)
 	return handle;
 }
 
+int KYTY_SYSV_ABI PadGetHandle(int user_id, int type, int index)
+{
+	PRINT_NAME();
+
+	EXIT_NOT_IMPLEMENTED(user_id != 1);
+	EXIT_NOT_IMPLEMENTED(type != 0);
+	EXIT_NOT_IMPLEMENTED(index != 0);
+
+	// Single-controller model: the same fixed handle PadOpen hands out
+	return 1;
+}
+
+int KYTY_SYSV_ABI PadClose(int handle)
+{
+	PRINT_NAME();
+
+	EXIT_NOT_IMPLEMENTED(handle != 1);
+
+	return OK;
+}
+
 int KYTY_SYSV_ABI PadSetMotionSensorState(int handle, bool enable)
 {
 	PRINT_NAME();

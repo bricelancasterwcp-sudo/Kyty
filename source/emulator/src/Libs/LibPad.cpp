@@ -15,6 +15,8 @@ LIB_DEFINE(InitPad_1)
 
 	LIB_FUNC("hv1luiJrqQM", Controller::PadInit);
 	LIB_FUNC("xk0AcarP3V4", Controller::PadOpen);
+	LIB_FUNC("u1GRHp+oWoY", Controller::PadGetHandle);
+	LIB_FUNC("6ncge5+l5Qs", Controller::PadClose);
 	LIB_FUNC("clVvL4ZDntw", Controller::PadSetMotionSensorState);
 	LIB_FUNC("gjP9-KQzoUk", Controller::PadGetControllerInformation);
 	LIB_FUNC("YndgXqQVV7c", Controller::PadReadState);
