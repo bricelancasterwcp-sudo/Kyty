@@ -448,14 +448,26 @@ void game_event_keyboard(GameApi* game, const EventKeyboard* key)
 	Libs::Keyboard::KeyboardHandleEvent(key->scan_code, key->down, key->mod);
 
 #if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS || KYTY_PLATFORM == KYTY_PLATFORM_LINUX
-	if (key->down && key->key_code == SDLK_ESCAPE)
+	// Ctrl+Q always quits, even when a title owns the keyboard
+	if (key->down && key->key_code == SDLK_q && (key->mod & KMOD_CTRL) != 0)
 	{
 		game->m_game_need_exit = true;
 	}
 
-	if (key->down && key->key_code == SDLK_SPACE)
+	// Escape-to-quit and Space-to-pause are emulator conveniences; suppress
+	// them once a title has opened the keyboard, so a game that uses those
+	// keys (e.g. Doom's menu / open-door) gets them instead
+	if (!Libs::Keyboard::KeyboardIsOpen())
 	{
-		SetPause(game, !game->m_game_is_paused);
+		if (key->down && key->key_code == SDLK_ESCAPE)
+		{
+			game->m_game_need_exit = true;
+		}
+
+		if (key->down && key->key_code == SDLK_SPACE)
+		{
+			SetPause(game, !game->m_game_is_paused);
+		}
 	}
 #endif
 }

@@ -21,6 +21,10 @@ int KYTY_SYSV_ABI KeyboardGetKey2Char(int handle, int unknown, uint32_t locks, u
 // Called from the window thread's SDL event loop
 void KeyboardHandleEvent(int scan_code, bool down, uint16_t sdl_mod);
 
+// True once a title has opened the keyboard, so the window layer can hand
+// keys to the guest instead of consuming them for emulator shortcuts
+bool KeyboardIsOpen();
+
 } // namespace Kyty::Libs::Keyboard
 
 #endif // KYTY_EMU_ENABLED

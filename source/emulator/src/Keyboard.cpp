@@ -74,6 +74,13 @@ static uint32_t locks_from_sdl(uint16_t sdl_mod)
 	return locks;
 }
 
+bool KeyboardIsOpen()
+{
+	Core::LockGuard lock(g_keyboard_state.mutex);
+
+	return g_keyboard_state.opened;
+}
+
 void KeyboardHandleEvent(int scan_code, bool down, uint16_t sdl_mod)
 {
 	Core::LockGuard lock(g_keyboard_state.mutex);

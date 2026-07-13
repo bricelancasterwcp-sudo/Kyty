@@ -511,6 +511,15 @@ bool FlipQueue::Flip(uint32_t micros)
 
 	auto* buffer = r.cfg->buffers[r.index].buffer_vulkan;
 
+	// Re-upload the scanout buffer from guest memory before presenting. A
+	// title that draws its framebuffer with the CPU (no GNM draws, e.g. the
+	// VideoOut samples or a doomgeneric port) never otherwise triggers the
+	// CPU->GPU sync, so the window would keep showing the buffer's initial
+	// contents. The object's hash check makes this a no-op when the memory
+	// is unchanged, so GPU-rendered scanout buffers are left intact.
+	Graphics::GpuMemoryFlush(g_video_out_context->GetGraphicCtx(), reinterpret_cast<uint64_t>(r.cfg->buffers[r.index].buffer),
+	                         r.cfg->buffers[r.index].buffer_size);
+
 	Graphics::WindowDrawBuffer(buffer);
 
 	m_mutex.Lock();
