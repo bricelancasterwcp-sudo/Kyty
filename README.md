@@ -94,16 +94,3 @@ External dependencies:
 * Vulkan SDK 1.2.198.1
 * Qt 5.15.0
 
-## Donate
-
-If you would like to support the project:
-
-- Bitcoin: bc1qd66pjk3xj3hzvm379uxy470n533nnt2deenpea
-
-<img src="https://user-images.githubusercontent.com/7149418/181066559-7f35befb-ad23-480c-9a75-3b663b1b9957.png" width="200">
-
-## Hire me
-
-**I'm available for hiring.** If you need C++ developer, please take a look at my [profile](https://github.com/InoriRus) and contact me by email
-
-**Я в поисках работы.** Если вам нужен разработчик C++, пишите мне на почту.
