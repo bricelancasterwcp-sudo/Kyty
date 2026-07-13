@@ -2374,20 +2374,19 @@ int KYTY_SYSV_ABI KernelGettimeofday(KernelTimeval* tp)
 		return KERNEL_ERROR_EFAULT;
 	}
 
-	// timespec t {};
-	// int result = clock_gettime(CLOCK_REALTIME, &t);
-	// tp->tv_sec  = t.tv_sec;
-	// tp->tv_usec = t.tv_nsec / 1000;
-
-	int  result = 0;
-	auto dt     = Core::DateTime::FromSystemUTC();
-	sec_to_timeval(tp, dt.ToUnix());
-
-	if (result == 0)
+	// Use a real high-resolution clock: DateTime::ToUnix() only carries
+	// whole-second precision, which leaves tv_usec at 0 and makes guests that
+	// derive millisecond timers (e.g. SDL_GetTicks) see a frozen clock.
+	timespec t {};
+	if (clock_gettime(CLOCK_REALTIME, &t) != 0)
 	{
-		return OK;
+		return KERNEL_ERROR_EINVAL;
 	}
-	return KERNEL_ERROR_EINVAL;
+
+	tp->tv_sec  = t.tv_sec;
+	tp->tv_usec = t.tv_nsec / 1000;
+
+	return OK;
 }
 
 uint64_t KYTY_SYSV_ABI KernelGetTscFrequency()
