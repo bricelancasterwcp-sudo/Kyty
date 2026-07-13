@@ -539,6 +539,14 @@ int64_t KYTY_SYSV_ABI write(int d, const void* buf, size_t nbytes)
 	return POSIX_N_CALL(LibKernel::FileSystem::KernelWrite(d, buf, nbytes));
 }
 
+int KYTY_SYSV_ABI gettimeofday(LibKernel::KernelTimeval* tp, void* /*tz*/)
+{
+	PRINT_NAME();
+
+	// The timezone argument is obsolete and ignored
+	return POSIX_CALL(LibKernel::KernelGettimeofday(tp));
+}
+
 LIB_DEFINE(InitLibKernel_1_Posix)
 {
 	LIB_FUNC("lLMT9vJAck0", clock_gettime);
@@ -706,6 +714,22 @@ LIB_DEFINE(InitLibKernel_1_Pthread)
 	LIB_FUNC("2Z+PpY6CaJg", Posix::pthread_mutex_unlock);
 	LIB_FUNC("mkx2fVhNMsg", Posix::pthread_cond_broadcast);
 	LIB_FUNC("Op8TBGY5KHg", Posix::pthread_cond_wait);
+
+	// Remaining posix pthread entry points, also imported under libkernel
+	// (the OpenOrbis libc / SDL2 resolve these NIDs from libkernel, not Posix)
+	LIB_FUNC("OxhIB8LB-PQ", Posix::pthread_create);
+	LIB_FUNC("h9CcP3J0oVM", Posix::pthread_join);
+	LIB_FUNC("K-jXhbt2gn4", Posix::pthread_mutex_trylock);
+	LIB_FUNC("ttHNfU+qDBU", Posix::pthread_mutex_init);
+	LIB_FUNC("dQHWEsJtoE4", Posix::pthread_mutexattr_init);
+	LIB_FUNC("mDmgMOGVUqg", Posix::pthread_mutexattr_settype);
+	LIB_FUNC("HF7lK46xzjY", Posix::pthread_mutexattr_destroy);
+	LIB_FUNC("ltCfaGr2JGE", Posix::pthread_mutex_destroy);
+	LIB_FUNC("mqULNdimTn0", Posix::pthread_key_create);
+	LIB_FUNC("6BpEZuDT7YI", Posix::pthread_key_delete);
+	LIB_FUNC("WrOLvHU0yQM", Posix::pthread_setspecific);
+	LIB_FUNC("0-KXaS70xy4", Posix::pthread_getspecific);
+	LIB_FUNC("n88vx3C5nW8", Posix::gettimeofday);
 }
 
 LIB_DEFINE(InitLibKernel_1)
