@@ -28,6 +28,7 @@ kyty_load_symbols('libc_internal_1');
 kyty_load_symbols('libDebug_1');
 kyty_load_symbols('libDialog_1');
 kyty_load_symbols('libDiscMap_1');
+kyty_load_symbols('libFreeType_1');
 kyty_load_symbols('libGraphicsDriver_1');
 kyty_load_symbols('libkernel_1');
 kyty_load_symbols('libNet_1');
