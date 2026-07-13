@@ -75,6 +75,22 @@ const SymbolRecord* SymbolDatabase::Find(const SymbolResolve& s) const
 	return &m_symbols.At(index);
 }
 
+// Match on the nid alone, ignoring library/module (dlsym semantics)
+const SymbolRecord* SymbolDatabase::FindByNidName(const String& nid) const
+{
+	auto prefix = nid + U"[";
+
+	for (const auto& r: m_symbols)
+	{
+		if (r.name.StartsWith(prefix))
+		{
+			return &r;
+		}
+	}
+
+	return nullptr;
+}
+
 } // namespace Kyty::Loader
 
 #endif // KYTY_EMU_ENABLED

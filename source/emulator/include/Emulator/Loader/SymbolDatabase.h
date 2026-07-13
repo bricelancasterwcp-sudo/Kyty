@@ -49,6 +49,7 @@ public:
 	void Add(const SymbolResolve& s, uint64_t vaddr, const String& dbg_name);
 
 	[[nodiscard]] const SymbolRecord* Find(const SymbolResolve& s) const;
+	[[nodiscard]] const SymbolRecord* FindByNidName(const String& nid) const;
 
 	void DbgDump(const String& folder, const String& file_name);
 

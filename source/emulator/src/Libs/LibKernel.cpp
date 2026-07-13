@@ -14,6 +14,7 @@
 #include "Emulator/Kernel/Semaphore.h"
 #include "Emulator/Libs/Errno.h"
 #include "Emulator/Libs/Libs.h"
+#include "Emulator/Loader/Nid.h"
 #include "Emulator/Loader/RuntimeLinker.h"
 #include "Emulator/Loader/SymbolDatabase.h"
 
@@ -247,6 +248,48 @@ static KYTY_SYSV_ABI int ioctl(int fd, uint64_t request, void* argp)
 	return 0;
 }
 
+static KYTY_SYSV_ABI int getrlimit(int resource, void* rlp)
+{
+	PRINT_NAME();
+
+	printf("\t resource = %d\n", resource);
+
+	if (rlp == nullptr)
+	{
+		*Posix::GetErrorAddr() = Posix::POSIX_EFAULT;
+		return -1;
+	}
+
+	// No limits are enforced; report unlimited (rlim_cur, rlim_max)
+	auto* limits = static_cast<int64_t*>(rlp);
+	limits[0]    = INT64_MAX;
+	limits[1]    = INT64_MAX;
+
+	return 0;
+}
+
+static KYTY_SYSV_ABI int cpuset_getaffinity(int level, int which, int64_t id, size_t setsize, void* mask)
+{
+	PRINT_NAME();
+
+	printf("\t level   = %d\n", level);
+	printf("\t which   = %d\n", which);
+	printf("\t id      = %" PRId64 "\n", id);
+	printf("\t setsize = %" PRIu64 "\n", setsize);
+
+	if (mask == nullptr || setsize == 0)
+	{
+		*Posix::GetErrorAddr() = Posix::POSIX_EFAULT;
+		return -1;
+	}
+
+	// 7 cores are available to a title
+	std::memset(mask, 0, setsize);
+	*static_cast<uint8_t*>(mask) = 0x7F;
+
+	return 0;
+}
+
 static KYTY_SYSV_ABI int64_t sysconf(int name)
 {
 	PRINT_NAME();
@@ -304,6 +347,42 @@ static KYTY_SYSV_ABI KernelModule KernelLoadStartModule(const char* module_file_
 	}
 
 	return static_cast<KernelModule>(handle);
+}
+
+static KYTY_SYSV_ABI int KernelDlsym(KernelModule handle, const char* symbol, void** addrp)
+{
+	PRINT_NAME();
+
+	if (symbol == nullptr || addrp == nullptr)
+	{
+		return KERNEL_ERROR_EFAULT;
+	}
+
+	printf("\t handle = %d\n", handle);
+	printf("\t symbol = %s\n", symbol);
+
+	auto* rt = Core::Singleton<Loader::RuntimeLinker>::Instance();
+
+	auto* program = rt->FindProgramById(handle);
+
+	if (program == nullptr || program->export_symbols == nullptr)
+	{
+		return KERNEL_ERROR_ESRCH;
+	}
+
+	// Sce dynamic symbols are stored by nid, not by name
+	const auto* record = program->export_symbols->FindByNidName(Loader::NidHash(symbol));
+
+	if (record == nullptr || record->vaddr == 0)
+	{
+		return KERNEL_ERROR_ESRCH;
+	}
+
+	*addrp = reinterpret_cast<void*>(record->vaddr);
+
+	printf("\t addr   = %016" PRIx64 "\n", record->vaddr);
+
+	return OK;
 }
 
 static int KYTY_SYSV_ABI KernelStopUnloadModule(KernelModule handle, size_t args, const void* argp, uint32_t flags,
@@ -926,6 +1005,11 @@ LIB_DEFINE(InitLibKernel_1)
 	LIB_FUNC("6c3rCVE-fTU", LibKernel::open);
 	LIB_FUNC("6xVpy0Fdq+I", LibKernel::sigprocmask);
 	LIB_FUNC("aPcyptbOiZs", LibKernel::sigprocmask);
+	LIB_FUNC("JZKw5+Wrnaw", LibKernel::sigprocmask);
+	LIB_FUNC("A0O5kF5x4LQ", Posix::fstat);
+	LIB_FUNC("NhpspxdjEKU", Posix::nanosleep);
+	LIB_FUNC("Wh7HbV7JFqc", LibKernel::getrlimit);
+	LIB_FUNC("Pdgml4rbxYk", LibKernel::cpuset_getaffinity);
 	LIB_FUNC("0t0-MxQNwK4", LibKernel::raise);
 	LIB_FUNC("KiJEPEWRyUY", LibKernel::sigaction);
 	LIB_FUNC("hHlZQUnlxSM", LibKernel::getrusage);
@@ -959,6 +1043,7 @@ LIB_DEFINE(InitLibKernel_1)
 	LIB_FUNC("WhCc1w3EhSI", LibKernel::KernelSetThreadAtexitReport);
 	LIB_FUNC("WslcK1FQcGI", LibKernel::KernelIsNeoMode);
 	LIB_FUNC("wzvqT4UqKX8", LibKernel::KernelLoadStartModule);
+	LIB_FUNC("LwG8g3niqwA", LibKernel::KernelDlsym);
 	LIB_FUNC("Xjoosiw+XPI", LibKernel::KernelUuidCreate);
 	LIB_FUNC("zE-wXIZjLoM", LibKernel::KernelDebugRaiseExceptionOnReleaseMode);
 }
