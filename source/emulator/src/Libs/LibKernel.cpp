@@ -503,6 +503,42 @@ int KYTY_SYSV_ABI munmap(void* addr, size_t len)
 	return POSIX_CALL(LibKernel::Memory::KernelMunmap(reinterpret_cast<uint64_t>(addr), len));
 }
 
+int64_t KYTY_SYSV_ABI lseek(int d, int64_t offset, int whence)
+{
+	PRINT_NAME();
+
+	// posix lseek returns the resulting offset (>= 0), or -1 with errno set
+	return POSIX_N_CALL(LibKernel::FileSystem::KernelLseek(d, offset, whence));
+}
+
+int KYTY_SYSV_ABI open(const char* path, int flags, uint16_t mode)
+{
+	PRINT_NAME();
+
+	return POSIX_N_CALL(LibKernel::FileSystem::KernelOpen(path, flags, mode));
+}
+
+int KYTY_SYSV_ABI close(int d)
+{
+	PRINT_NAME();
+
+	return POSIX_CALL(LibKernel::FileSystem::KernelClose(d));
+}
+
+int64_t KYTY_SYSV_ABI read(int d, void* buf, size_t nbytes)
+{
+	PRINT_NAME();
+
+	return POSIX_N_CALL(LibKernel::FileSystem::KernelRead(d, buf, nbytes));
+}
+
+int64_t KYTY_SYSV_ABI write(int d, const void* buf, size_t nbytes)
+{
+	PRINT_NAME();
+
+	return POSIX_N_CALL(LibKernel::FileSystem::KernelWrite(d, buf, nbytes));
+}
+
 LIB_DEFINE(InitLibKernel_1_Posix)
 {
 	LIB_FUNC("lLMT9vJAck0", clock_gettime);
@@ -552,6 +588,11 @@ LIB_DEFINE(InitLibKernel_1_FS)
 	LIB_FUNC("AUXVxWeJU-A", FileSystem::KernelUnlink);
 	LIB_FUNC("taRWhTJFTgE", FileSystem::KernelGetdirentries);
 	LIB_FUNC("oib76F-12fk", FileSystem::KernelLseek);
+	LIB_FUNC("Oy6IpwgtYOk", Posix::lseek);
+	LIB_FUNC("wuCroIGjt2g", Posix::open);
+	LIB_FUNC("bY-PO6JhzhQ", Posix::close);
+	LIB_FUNC("AqBioC2vF3I", Posix::read);
+	LIB_FUNC("FN4gaPmuFV8", Posix::write);
 	LIB_FUNC("j2AIqSqJP0w", FileSystem::KernelGetdents);
 	LIB_FUNC("1-LFLmRFxxM", FileSystem::KernelMkdir);
 }
