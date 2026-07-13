@@ -85,6 +85,20 @@ constexpr uint64_t XSAVE_CHK_GUARD   = 0xDeadBeef5533CCAAu;
 static uint64_t g_desired_base_addr = SYSTEM_RESERVED + CODE_BASE_OFFSET;
 static uint64_t g_invalid_memory    = 0;
 
+// When set (env KYTY_PERMISSIVE=1), unresolved imports resolve to a no-op that
+// returns 0 instead of the abort trampoline. Lets a title boot past the long
+// tail of non-critical libc/system calls so the load-bearing gaps surface.
+static KYTY_SYSV_ABI uint64_t unresolved_stub()
+{
+	return 0;
+}
+
+static bool permissive_unresolved()
+{
+	static const bool enabled = (getenv("KYTY_PERMISSIVE") != nullptr);
+	return enabled;
+}
+
 static Program* g_tls_main_program = nullptr;
 alignas(64) static uint8_t g_tls_reg_save_area[XSAVE_BUFFER_SIZE + sizeof(XSAVE_CHK_GUARD)];
 static uint8_t g_tls_spinlock = 0;
@@ -473,8 +487,14 @@ static void relocate(uint32_t index, Elf64_Rela* r, Program* program, bool jmpre
 				{
 					printf("UNRESOLVED FUNC: %s\n", Log::RemoveColors(ri.name).C_Str());
 				}
-				EXIT_NOT_IMPLEMENTED(index >= program->custom_call_plt_num);
-				value = reinterpret_cast<Jit::CallPlt*>(program->custom_call_plt_vaddr)->GetAddr(index);
+				if (permissive_unresolved())
+				{
+					value = reinterpret_cast<uint64_t>(unresolved_stub);
+				} else
+				{
+					EXIT_NOT_IMPLEMENTED(index >= program->custom_call_plt_num);
+					value = reinterpret_cast<Jit::CallPlt*>(program->custom_call_plt_vaddr)->GetAddr(index);
+				}
 			} else
 			{
 				value = RuntimeLinker::ReadFromElf(program, ri.vaddr) + ri.base_vaddr;
