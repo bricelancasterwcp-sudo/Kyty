@@ -17,6 +17,7 @@
 #include "Emulator/Graphics/Image.h"
 #include "Emulator/Graphics/Utils.h"
 #include "Emulator/Graphics/VideoOut.h"
+#include "Emulator/Keyboard.h"
 #include "Emulator/Loader/SystemContent.h"
 #include "Emulator/Profiler.h"
 
@@ -443,6 +444,8 @@ void game_event_keyboard(GameApi* game, const EventKeyboard* key)
 	       (key->down ? "down" : ""), (key->up ? "up" : ""), (key->pressed ? "pressed" : ""), (key->released ? "released" : ""),
 	       (key->repeat ? "repeat" : ""), key->scan_code, key->key_code, key->mod);
 #endif
+
+	Libs::Keyboard::KeyboardHandleEvent(key->scan_code, key->down, key->mod);
 
 #if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS || KYTY_PLATFORM == KYTY_PLATFORM_LINUX
 	if (key->down && key->key_code == SDLK_ESCAPE)

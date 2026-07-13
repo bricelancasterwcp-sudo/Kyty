@@ -18,6 +18,7 @@ namespace FreeType {
 LIB_DEFINE(InitFreeType_1);
 } // namespace FreeType
 LIB_DEFINE(InitGraphicsDriver_1);
+LIB_DEFINE(InitKeyboard_1);
 LIB_DEFINE(InitLibKernel_1);
 LIB_DEFINE(InitNet_1);
 LIB_DEFINE(InitPad_1);
@@ -39,6 +40,7 @@ bool Init(const String& id, Loader::SymbolDatabase* s)
 	LIB_CHECK(U"libDiscMap_1", InitDiscMap_1);
 	LIB_CHECK(U"libFreeType_1", FreeType::InitFreeType_1);
 	LIB_CHECK(U"libGraphicsDriver_1", InitGraphicsDriver_1);
+	LIB_CHECK(U"libKeyboard_1", InitKeyboard_1);
 	LIB_CHECK(U"libkernel_1", InitLibKernel_1);
 	LIB_CHECK(U"libNet_1", InitNet_1);
 	LIB_CHECK(U"libPad_1", InitPad_1);
@@ -63,6 +65,7 @@ void InitAll(Loader::SymbolDatabase* s)
 	LIB_LOAD(InitDiscMap_1);
 	LIB_LOAD(FreeType::InitFreeType_1);
 	LIB_LOAD(InitGraphicsDriver_1);
+	LIB_LOAD(InitKeyboard_1);
 	LIB_LOAD(InitLibKernel_1);
 	LIB_LOAD(InitNet_1);
 	LIB_LOAD(InitPad_1);
