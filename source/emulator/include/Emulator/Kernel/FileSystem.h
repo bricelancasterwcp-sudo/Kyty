@@ -35,6 +35,12 @@ struct FileStat
 	unsigned int: (8 / 2) * (16 - static_cast<int>(sizeof(KernelTimespec)));
 };
 
+struct KernelIovec
+{
+	void*  iov_base;
+	size_t iov_len;
+};
+
 KYTY_SUBSYSTEM_DEFINE(FileSystem);
 
 void   Mount(const String& folder, const String& point);
@@ -44,8 +50,10 @@ String GetRealFilename(const String& mounted_file_name);
 int KYTY_SYSV_ABI     KernelOpen(const char* path, int flags, uint16_t mode);
 int KYTY_SYSV_ABI     KernelClose(int d);
 int64_t KYTY_SYSV_ABI KernelRead(int d, void* buf, size_t nbytes);
+int64_t KYTY_SYSV_ABI KernelReadv(int d, const KernelIovec* iov, int iovcnt);
 int64_t KYTY_SYSV_ABI KernelPread(int d, void* buf, size_t nbytes, int64_t offset);
 int64_t KYTY_SYSV_ABI KernelWrite(int d, const void* buf, size_t nbytes);
+int64_t KYTY_SYSV_ABI KernelWritev(int d, const KernelIovec* iov, int iovcnt);
 int64_t KYTY_SYSV_ABI KernelPwrite(int d, const void* buf, size_t nbytes, int64_t offset);
 int64_t KYTY_SYSV_ABI KernelLseek(int d, int64_t offset, int whence);
 int KYTY_SYSV_ABI     KernelStat(const char* path, FileStat* sb);

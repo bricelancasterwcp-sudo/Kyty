@@ -520,6 +520,78 @@ int64_t KYTY_SYSV_ABI KernelWrite(int d, const void* buf, size_t nbytes)
 	return bytes_written;
 }
 
+int64_t KYTY_SYSV_ABI KernelReadv(int d, const KernelIovec* iov, int iovcnt)
+{
+	PRINT_NAME();
+
+	if (iov == nullptr || iovcnt <= 0)
+	{
+		return KERNEL_ERROR_EINVAL;
+	}
+
+	int64_t total = 0;
+
+	for (int i = 0; i < iovcnt; i++)
+	{
+		if (iov[i].iov_len == 0)
+		{
+			continue;
+		}
+
+		auto result = KernelRead(d, iov[i].iov_base, iov[i].iov_len);
+
+		if (result < 0)
+		{
+			return (total > 0 ? total : result);
+		}
+
+		total += result;
+
+		if (static_cast<size_t>(result) < iov[i].iov_len)
+		{
+			break;
+		}
+	}
+
+	return total;
+}
+
+int64_t KYTY_SYSV_ABI KernelWritev(int d, const KernelIovec* iov, int iovcnt)
+{
+	PRINT_NAME();
+
+	if (iov == nullptr || iovcnt <= 0)
+	{
+		return KERNEL_ERROR_EINVAL;
+	}
+
+	int64_t total = 0;
+
+	for (int i = 0; i < iovcnt; i++)
+	{
+		if (iov[i].iov_len == 0)
+		{
+			continue;
+		}
+
+		auto result = KernelWrite(d, iov[i].iov_base, iov[i].iov_len);
+
+		if (result < 0)
+		{
+			return (total > 0 ? total : result);
+		}
+
+		total += result;
+
+		if (static_cast<size_t>(result) < iov[i].iov_len)
+		{
+			break;
+		}
+	}
+
+	return total;
+}
+
 int64_t KYTY_SYSV_ABI KernelPread(int d, void* buf, size_t nbytes, int64_t offset)
 {
 	PRINT_NAME();
