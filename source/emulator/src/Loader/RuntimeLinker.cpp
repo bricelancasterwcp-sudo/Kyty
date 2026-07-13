@@ -18,6 +18,10 @@
 #include "Emulator/Loader/SymbolDatabase.h"
 #include "Emulator/Profiler.h"
 
+#if KYTY_PLATFORM == KYTY_PLATFORM_LINUX
+#include <pthread.h>
+#endif
+
 #ifdef KYTY_EMU_ENABLED
 
 namespace Kyty::Libs::LibKernel {
@@ -176,7 +180,8 @@ static void KYTY_SYSV_ABI stackwalk_x86(uint64_t rbp, void** stack, int* depth, 
 
 	for (; i < d; i++)
 	{
-		if (!(reinterpret_cast<uintptr_t>(frame) >= stack_addr && reinterpret_cast<uintptr_t>(frame) < stack_addr + stack_size))
+		if (!(reinterpret_cast<uintptr_t>(frame) >= stack_addr &&
+		      reinterpret_cast<uintptr_t>(frame) + sizeof(FrameS) <= stack_addr + stack_size))
 		{
 			break;
 		}
@@ -196,7 +201,27 @@ static void KYTY_SYSV_ABI stackwalk_x86(uint64_t rbp, void** stack, int* depth, 
 
 void KYTY_SYSV_ABI sys_stack_walk_x86(uint64_t rbp, void** stack, int* depth)
 {
-	stackwalk_x86(rbp, stack, depth, 0, UINT64_MAX, SYSTEM_RESERVED + CODE_BASE_OFFSET,
+	uintptr_t stack_addr = 0;
+	size_t    stack_size = UINT64_MAX;
+
+#if KYTY_PLATFORM == KYTY_PLATFORM_LINUX
+	// Without real bounds the walker follows a stale rbp chain into unmapped
+	// memory and the crash reporter itself segfaults
+	pthread_attr_t attr {};
+	if (pthread_getattr_np(pthread_self(), &attr) == 0)
+	{
+		void*  base = nullptr;
+		size_t size = 0;
+		if (pthread_attr_getstack(&attr, &base, &size) == 0)
+		{
+			stack_addr = reinterpret_cast<uintptr_t>(base);
+			stack_size = size;
+		}
+		pthread_attr_destroy(&attr);
+	}
+#endif
+
+	stackwalk_x86(rbp, stack, depth, stack_addr, stack_size, SYSTEM_RESERVED + CODE_BASE_OFFSET,
 	              g_desired_base_addr - (SYSTEM_RESERVED + CODE_BASE_OFFSET));
 }
 
