@@ -277,7 +277,10 @@ static int64_t KYTY_SYSV_ABI read(int d, void* buf, uint64_t nbytes)
 {
 	// PRINT_NAME();
 
-	EXIT_NOT_IMPLEMENTED(d != 0);
+	if (d != 0)
+	{
+		return POSIX_N_CALL(FileSystem::KernelRead(d, buf, nbytes));
+	}
 
 	return static_cast<int64_t>(strlen(std::fgets(static_cast<char*>(buf), static_cast<int>(nbytes), stdin)));
 }
