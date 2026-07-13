@@ -95,6 +95,70 @@ static VirtualMemory::Mode get_protection_flag(int mode)
 	}
 }
 
+static uintptr_t align_up(uintptr_t addr, uint64_t alignment)
+{
+	return (addr + alignment - 1) & ~(alignment - 1);
+}
+
+[[maybe_unused]] static bool is_mmaped(void* ptr, size_t length);
+
+// The emulator packs guest page numbers (vaddr >> 12) into 32 bits, so guest
+// allocations must stay below 2^44. Linux mmap(NULL, ...) returns ~47-bit
+// addresses, so steer hint-less allocations into a low window instead (the
+// Windows build achieves this by relocating the host image to 0x100000000000).
+constexpr uintptr_t LOW_VA_START = 0x0000010000000000u; // 1 TiB
+constexpr uintptr_t LOW_VA_END   = 0x00000e0000000000u; // 14 TiB < 2^44
+
+static uintptr_t g_low_va_hint = LOW_VA_START;
+
+static void* mmap_low(size_t size, int protect, uint64_t alignment)
+{
+	uint64_t align = (alignment == 0 ? 0x10000u : alignment);
+
+	pthread_mutex_lock(&g_virtual_mutex);
+	uintptr_t hint = align_up(g_low_va_hint, align);
+	pthread_mutex_unlock(&g_virtual_mutex);
+
+	for (int attempt = 0; attempt < 1024 && hint + size <= LOW_VA_END; attempt++)
+	{
+#ifdef KYTY_FIXED_NOREPLACE
+		// NOLINTNEXTLINE
+		void* ptr = mmap(reinterpret_cast<void*>(hint), size, protect, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANON, -1, 0);
+#else
+		void* ptr = (is_mmaped(reinterpret_cast<void*>(hint), size)
+		                 ? MAP_FAILED
+		                 : mmap(reinterpret_cast<void*>(hint), size, protect, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0)); // NOLINT
+#endif
+		if (ptr != MAP_FAILED)
+		{
+			pthread_mutex_lock(&g_virtual_mutex);
+			uintptr_t next = align_up(reinterpret_cast<uintptr_t>(ptr) + size, 0x10000u);
+			if (next > g_low_va_hint)
+			{
+				g_low_va_hint = next;
+			}
+			pthread_mutex_unlock(&g_virtual_mutex);
+			return ptr;
+		}
+		hint = align_up(hint + size + 0x10000u, align);
+	}
+
+	return MAP_FAILED;
+}
+
+static void record_alloc(uintptr_t ret_addr, size_t size, int protect)
+{
+	pthread_mutex_lock(&g_virtual_mutex);
+	(*g_allocs)[ret_addr] = size;
+	uintptr_t page_start  = ret_addr >> 12u;
+	uintptr_t page_end    = (ret_addr + size - 1) >> 12u;
+	for (uintptr_t page = page_start; page <= page_end; page++)
+	{
+		(*g_protects)[page] = protect;
+	}
+	pthread_mutex_unlock(&g_virtual_mutex);
+}
+
 uint64_t sys_virtual_alloc(uint64_t address, uint64_t size, VirtualMemory::Mode mode)
 {
 	EXIT_IF(g_allocs == nullptr);
@@ -103,29 +167,21 @@ uint64_t sys_virtual_alloc(uint64_t address, uint64_t size, VirtualMemory::Mode 
 
 	int protect = get_protection_flag(mode);
 
-	void* ptr = mmap(reinterpret_cast<void*>(addr), size, protect, MAP_PRIVATE | MAP_ANON, -1, 0); // NOLINT
+	void* ptr = (addr == 0 ? mmap_low(size, protect, 0) : MAP_FAILED);
+
+	if (ptr == MAP_FAILED)
+	{
+		ptr = mmap(reinterpret_cast<void*>(addr), size, protect, MAP_PRIVATE | MAP_ANON, -1, 0); // NOLINT
+	}
 
 	auto ret_addr = reinterpret_cast<uintptr_t>(ptr);
 
 	if (ptr != MAP_FAILED)
 	{
-		pthread_mutex_lock(&g_virtual_mutex);
-		(*g_allocs)[ret_addr] = size;
-		uintptr_t page_start  = ret_addr >> 12u;
-		uintptr_t page_end    = (ret_addr + size - 1) >> 12u;
-		for (uintptr_t page = page_start; page <= page_end; page++)
-		{
-			(*g_protects)[page] = protect;
-		}
-		pthread_mutex_unlock(&g_virtual_mutex);
+		record_alloc(ret_addr, size, protect);
 	}
 
 	return ret_addr;
-}
-
-static uintptr_t align_up(uintptr_t addr, uint64_t alignment)
-{
-	return (addr + alignment - 1) & ~(alignment - 1);
 }
 
 uint64_t sys_virtual_alloc_aligned(uint64_t address, uint64_t size, VirtualMemory::Mode mode, uint64_t alignment)
@@ -140,7 +196,12 @@ uint64_t sys_virtual_alloc_aligned(uint64_t address, uint64_t size, VirtualMemor
 	auto addr    = static_cast<uintptr_t>(address);
 	int  protect = get_protection_flag(mode);
 
-	void* ptr = mmap(reinterpret_cast<void*>(addr), size, protect, MAP_PRIVATE | MAP_ANON, -1, 0); // NOLINT
+	void* ptr = (addr == 0 ? mmap_low(size, protect, alignment) : MAP_FAILED);
+
+	if (ptr == MAP_FAILED)
+	{
+		ptr = mmap(reinterpret_cast<void*>(addr), size, protect, MAP_PRIVATE | MAP_ANON, -1, 0); // NOLINT
+	}
 
 	auto ret_addr = reinterpret_cast<uintptr_t>(ptr);
 
