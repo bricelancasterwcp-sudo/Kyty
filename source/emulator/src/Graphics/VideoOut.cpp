@@ -10,6 +10,7 @@
 #include "Emulator/Common.h"
 #include "Emulator/Config.h"
 #include "Emulator/Graphics/GraphicsRender.h"
+#include "Emulator/Loader/Timer.h"
 #include "Emulator/Graphics/Objects/GpuMemory.h"
 #include "Emulator/Graphics/Objects/VideoOutBuffer.h"
 #include "Emulator/Graphics/Tile.h"
@@ -1052,6 +1053,25 @@ KYTY_SYSV_ABI int VideoOutSubmitFlip(int handle, int index, int flip_mode, int64
 	if (index < 0 || index > 15)
 	{
 		return VIDEO_OUT_ERROR_INVALID_INDEX;
+	}
+
+	// Pace flips to the configured rate (0/1/2 -> 60/30/20 Hz). A real console
+	// blocks flips on vblank; without this the emulator flips as fast as it can,
+	// which collapses guest per-frame time deltas to zero and trips naive
+	// fps = 1000 / dt style math.
+	{
+		static double last_flip_ms = 0.0;
+
+		constexpr double frame_ms[] = {1000.0 / 60.0, 1000.0 / 30.0, 1000.0 / 20.0};
+		double           target     = frame_ms[ctx->flip_rate >= 0 && ctx->flip_rate <= 2 ? ctx->flip_rate : 0];
+
+		double now     = Loader::Timer::GetTimeMs();
+		double elapsed = now - last_flip_ms;
+		if (last_flip_ms > 0.0 && elapsed >= 0.0 && elapsed < target)
+		{
+			Core::Thread::SleepMicro(static_cast<uint32_t>((target - elapsed) * 1000.0));
+		}
+		last_flip_ms = Loader::Timer::GetTimeMs();
 	}
 
 	if (!g_video_out_context->GetFlipQueue().Submit(ctx, index, flip_arg))
