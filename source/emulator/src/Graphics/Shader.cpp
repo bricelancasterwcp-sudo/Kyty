@@ -121,19 +121,28 @@ static String8 operand_to_str(ShaderOperand op)
 	{
 		case ShaderOperandType::LiteralConstant:
 			EXIT_IF(op.size != 0);
-			EXIT_IF(op.negate || op.absolute);
-			return String8::FromPrintf("%f (%u)", op.constant.f, op.constant.u);
-			break;
+			ret = String8::FromPrintf("%f (%u)", op.constant.f, op.constant.u);
+			if (op.absolute)
+			{
+				ret = "abs(" + ret + ")";
+			}
+			return op.negate ? "-" + ret : ret;
 		case ShaderOperandType::IntegerInlineConstant:
 			EXIT_IF(op.size != 0);
-			EXIT_IF(op.negate || op.absolute);
-			return String8::FromPrintf("%d", op.constant.i);
-			break;
+			ret = String8::FromPrintf("%d", op.constant.i);
+			if (op.absolute)
+			{
+				ret = "abs(" + ret + ")";
+			}
+			return op.negate ? "-" + ret : ret;
 		case ShaderOperandType::FloatInlineConstant:
 			EXIT_IF(op.size != 0);
-			EXIT_IF(op.negate || op.absolute);
-			return String8::FromPrintf("%f", op.constant.f);
-			break;
+			ret = String8::FromPrintf("%f", op.constant.f);
+			if (op.absolute)
+			{
+				ret = "abs(" + ret + ")";
+			}
+			return op.negate ? "-" + ret : ret;
 		default: break;
 	}
 
@@ -1019,6 +1028,8 @@ static void ShaderDetectBuffers(ShaderVertexInputInfo* info, bool ps5)
 				if (offset1 < stride && offset2 < stride)
 				{
 					EXIT_NOT_IMPLEMENTED(b.num_records != r.NumRecords());
+					// per-vertex and per-instance attributes can't share a binding
+					EXIT_NOT_IMPLEMENTED(b.is_instance != info->resources_instance[ri]);
 					b.addr = base;
 					EXIT_NOT_IMPLEMENTED(b.attr_num >= ShaderVertexInputBuffer::ATTR_MAX);
 					b.attr_indices[b.attr_num++] = ri;
@@ -1037,6 +1048,7 @@ static void ShaderDetectBuffers(ShaderVertexInputInfo* info, bool ps5)
 			info->buffers[bi].num_records     = r.NumRecords();
 			info->buffers[bi].attr_num        = 1;
 			info->buffers[bi].attr_indices[0] = ri;
+			info->buffers[bi].is_instance     = info->resources_instance[ri];
 		}
 	}
 
@@ -1113,7 +1125,12 @@ static void ShaderParseFetch(ShaderVertexInputInfo* info, const uint32_t* fetch,
 			// EXIT_NOT_IMPLEMENTED(!(i >= 2 && insts.At(i - 1).type == ShaderInstructionType::SWaitcnt &&
 			//                       insts.At(i - 2).type == ShaderInstructionType::SLoadDwordx4));
 			EXIT_NOT_IMPLEMENTED(inst.dst.type != ShaderOperandType::Vgpr);
-			EXIT_NOT_IMPLEMENTED(inst.src[0].type != ShaderOperandType::Vgpr || inst.src[0].register_id != 0);
+			// src[0] is the fetch-address VGPR. freegnm's generated fetch shader lays out
+			// VGPR0-3 as (VertexID, InstanceID/StepRate0, InstanceID/StepRate1, InstanceID):
+			//   v0        -> per-vertex attribute (VK_VERTEX_INPUT_RATE_VERTEX)
+			//   v1/v2/v3  -> per-instance attribute (VK_VERTEX_INPUT_RATE_INSTANCE)
+			EXIT_NOT_IMPLEMENTED(inst.src[0].type != ShaderOperandType::Vgpr ||
+			                     inst.src[0].register_id > 3);
 			EXIT_NOT_IMPLEMENTED(inst.src[1].type != ShaderOperandType::Sgpr);
 			EXIT_NOT_IMPLEMENTED(inst.src[2].type != ShaderOperandType::IntegerInlineConstant || inst.src[2].constant.i != 0);
 
@@ -1129,6 +1146,8 @@ static void ShaderParseFetch(ShaderVertexInputInfo* info, const uint32_t* fetch,
 			r.fields[1]       = temp_value[t + 1];
 			r.fields[2]       = temp_value[t + 2];
 			r.fields[3]       = temp_value[t + 3];
+
+			info->resources_instance[info->resources_num] = (inst.src[0].register_id != 0);
 
 			info->resources_num++;
 

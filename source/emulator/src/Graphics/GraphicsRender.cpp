@@ -2054,7 +2054,7 @@ static VulkanPipeline* CreatePipelineInternal(VkRenderPass render_pass, const Sh
 		const auto& b            = vs_input_info->buffers[bi];
 		input_desc[bi].binding   = bi;
 		input_desc[bi].stride    = b.stride;
-		input_desc[bi].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+		input_desc[bi].inputRate = b.is_instance ? VK_VERTEX_INPUT_RATE_INSTANCE : VK_VERTEX_INPUT_RATE_VERTEX;
 
 		for (int ai = 0; ai < b.attr_num; ai++)
 		{
@@ -4684,7 +4684,8 @@ static bool shader_is_disabled(HW::Shader* sh_ctx)
 }
 
 void GraphicsRenderDrawIndex(uint64_t submit_id, CommandBuffer* buffer, HW::Context* ctx, HW::UserConfig* ucfg, HW::Shader* sh_ctx,
-                             uint32_t index_type_and_size, uint32_t index_count, const void* index_addr, uint32_t flags, uint32_t type)
+                             uint32_t index_type_and_size, uint32_t index_count, const void* index_addr, uint32_t flags, uint32_t type,
+                             uint32_t num_instances)
 {
 	KYTY_PROFILER_FUNCTION();
 
@@ -4814,12 +4815,12 @@ void GraphicsRenderDrawIndex(uint64_t submit_id, CommandBuffer* buffer, HW::Cont
 	{
 		case 4:
 		case 5:
-		case 6: vkCmdDrawIndexed(vk_buffer, index_count, 1, 0, 0, 0); break;
+		case 6: vkCmdDrawIndexed(vk_buffer, index_count, num_instances, 0, 0, 0); break;
 		case 19:
 			EXIT_NOT_IMPLEMENTED((index_count & 0x3u) != 0);
 			for (uint32_t i = 0; i < index_count; i += 4)
 			{
-				vkCmdDrawIndexed(vk_buffer, 4, 1, i, 0, 0);
+				vkCmdDrawIndexed(vk_buffer, 4, num_instances, i, 0, 0);
 			}
 			break;
 		default: EXIT("unknown primitive type: %u\n", ucfg->GetPrimType());
@@ -4833,7 +4834,7 @@ void GraphicsRenderDrawIndex(uint64_t submit_id, CommandBuffer* buffer, HW::Cont
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void GraphicsRenderDrawIndexAuto(uint64_t submit_id, CommandBuffer* buffer, HW::Context* ctx, HW::UserConfig* ucfg, HW::Shader* sh_ctx,
-                                 uint32_t index_count, uint32_t flags)
+                                 uint32_t index_count, uint32_t flags, uint32_t num_instances)
 {
 	KYTY_PROFILER_FUNCTION();
 
@@ -4930,16 +4931,16 @@ void GraphicsRenderDrawIndexAuto(uint64_t submit_id, CommandBuffer* buffer, HW::
 
 	switch (ucfg->GetPrimType())
 	{
-		case 4: vkCmdDraw(vk_buffer, index_count, 1, 0, 0); break;
+		case 4: vkCmdDraw(vk_buffer, index_count, num_instances, 0, 0); break;
 		case 17:
 			EXIT_NOT_IMPLEMENTED(!(index_count == 3 && vs_input_info.buffers_num == 0));
-			vkCmdDraw(vk_buffer, 4, 1, 0, 0);
+			vkCmdDraw(vk_buffer, 4, num_instances, 0, 0);
 			break;
 		case 19:
 			EXIT_NOT_IMPLEMENTED((index_count & 0x3u) != 0);
 			for (uint32_t i = 0; i < index_count; i += 4)
 			{
-				vkCmdDraw(vk_buffer, 4, 1, i, 0);
+				vkCmdDraw(vk_buffer, 4, num_instances, i, 0);
 			}
 			break;
 		default: EXIT("unknown primitive type: %u\n", ucfg->GetPrimType());

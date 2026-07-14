@@ -1048,8 +1048,6 @@ void CommandProcessor::SetNumInstances(uint32_t num_instances)
 	}
 
 	m_num_instances = num_instances;
-
-	EXIT_NOT_IMPLEMENTED(m_num_instances != 1);
 }
 
 void CommandProcessor::DrawIndex(uint32_t index_count, const void* index_addr, uint32_t flags, uint32_t type)
@@ -1059,7 +1057,7 @@ void CommandProcessor::DrawIndex(uint32_t index_count, const void* index_addr, u
 	EXIT_IF(m_current_buffer < 0 || m_current_buffer >= VK_BUFFERS_NUM);
 
 	GraphicsRenderDrawIndex(m_sumbit_id, m_buffer[m_current_buffer], &m_ctx, &m_ucfg, &m_sh_ctx, m_index_type_and_size, index_count,
-	                        index_addr, flags, type);
+	                        index_addr, flags, type, m_num_instances);
 }
 
 void CommandProcessor::DispatchDirect(uint32_t thread_group_x, uint32_t thread_group_y, uint32_t thread_group_z, uint32_t mode)
@@ -1078,7 +1076,7 @@ void CommandProcessor::DrawIndexAuto(uint32_t index_count, uint32_t flags)
 
 	EXIT_IF(m_current_buffer < 0 || m_current_buffer >= VK_BUFFERS_NUM);
 
-	GraphicsRenderDrawIndexAuto(m_sumbit_id, m_buffer[m_current_buffer], &m_ctx, &m_ucfg, &m_sh_ctx, index_count, flags);
+	GraphicsRenderDrawIndexAuto(m_sumbit_id, m_buffer[m_current_buffer], &m_ctx, &m_ucfg, &m_sh_ctx, index_count, flags, m_num_instances);
 }
 
 void CommandProcessor::ClearGds(uint64_t dw_offset, uint32_t dw_num, uint32_t clear_value)

@@ -17,6 +17,7 @@ Verified on Ubuntu (gcc 13+, X11/XWayland, Vulkan on NVIDIA), using homebrew bui
 | `input` | controller, PNG asset loading, `readv` | runs |
 | `SDL2` | threads, TTF text via FreeType, textures, full game loop | runs (~60 fps)¹ |
 | `cube`² | GNM command processor, GCN→SPIR-V recompiler, resource-bound shaders (vertex fetch + constant buffers + 2D texture), depth test, double buffering | renders |
+| `instcube`² | instanced draw: one `DrawIndexAuto` with `SetNumInstances(N)` → N cubes, each stepped by a per-instance vertex attribute (`InstanceID` fetch) | renders |
 
 ¹ Currently needs `KYTY_PERMISSIVE=1` (below) to stub the remaining unregistered POSIX libc calls; core rendering, threading and fonts are real.
 
@@ -27,6 +28,7 @@ Audio (`sceAudioOut`), MP4 video, and networking are not implemented on this for
 ### Notable fixes in this fork
 
 - **GNM graphics pipeline & resource-bound shaders** — the GNM command processor and GCN→SPIR-V shader recompiler drive real homebrew graphics end-to-end on Vulkan. **Resource-bound shaders now work:** external vertex fetch, constant buffers in both the vertex and pixel stage (via the `0x1c` indirect resource table), and 2D textures + samplers — so a textured, MVP-transformed, depth-tested cube renders. Along the way: derive a shader's `0x1c` table register from its code (works around a psbc/ACO off-by-one), classify indirect-table entries as buffer/texture/sampler by their consumer instruction, declare direct SGPRs so unused `base_vertex`/`start_instance` don't break SPIR-V, accept partial `exp param` varying masks (vec1/2/3), `s_setprio` as a no-op, and looser depth-tiling / double-buffered-scanout handling.
+- **Instanced rendering** — `SetNumInstances(N)` + `DrawIndex`/`DrawIndexAuto` now issue a real Vulkan instanced draw (`instanceCount = N`). Per-instance vertex attributes are recognized by their fetch-address VGPR (`v1`–`v3` = `InstanceID`, `v0` = `VertexID`) and mapped to `VK_VERTEX_INPUT_RATE_INSTANCE`, so a single draw call renders N copies each stepped by its own attribute data.
 - **Builds on Ubuntu** — the Qt launcher and warnings-as-errors are now optional CMake flags, so the emulator core compiles cleanly with modern gcc.
 - **TLS instruction patcher** handles the `data16` (`0x66`) prefixes clang emits; without this, any guest thread-local access corrupted the host thread and crashed. This unblocks essentially all real (TLS-using) code.
 - **FreeType bridge** — guest FreeType calls are forwarded to the host `libfreetype`, enabling TTF text rendering.

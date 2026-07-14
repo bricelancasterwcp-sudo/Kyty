@@ -750,6 +750,7 @@ struct ShaderVertexInputBuffer
 	int      attr_num               = 0;
 	int      attr_indices[ATTR_MAX] = {0};
 	uint32_t attr_offsets[ATTR_MAX] = {0};
+	bool     is_instance            = false; // per-instance step rate (fetched via instance id, not vertex id)
 };
 
 struct ShaderVertexDestination
@@ -868,6 +869,7 @@ struct ShaderVertexInputInfo
 
 	ShaderBufferResource    resources[RES_MAX];
 	ShaderVertexDestination resources_dst[RES_MAX];
+	bool                    resources_instance[RES_MAX] = {}; // fetched via instance id (per-instance step rate)
 	ShaderVertexInputBuffer buffers[RES_MAX];
 	ShaderBindResources     bind;
 	int                     resources_num    = 0;
