@@ -963,6 +963,11 @@ void* GpuMemory::CreateObject(uint64_t submit_id, GraphicContext* ctx, CommandBu
 				case ObjectsRelation(GpuMemoryObjectType::StorageBuffer, OverlapType::Equals, GpuMemoryObjectType::StorageTexture):
 				case ObjectsRelation(GpuMemoryObjectType::StorageBuffer, OverlapType::Equals, GpuMemoryObjectType::Texture):
 				case ObjectsRelation(GpuMemoryObjectType::VideoOutBuffer, OverlapType::Equals, GpuMemoryObjectType::StorageBuffer):
+				// A double-buffered scanout buffer re-used as a render target: the
+				// render texture aliases the VideoOut buffer at the same address. Treat
+				// as an overlap (both views coexist; Kyty syncs via write-back), same as
+				// the VideoOutBuffer/StorageBuffer alias above.
+				case ObjectsRelation(GpuMemoryObjectType::VideoOutBuffer, OverlapType::Equals, GpuMemoryObjectType::RenderTexture):
 				{
 					overlap = true;
 					break;
