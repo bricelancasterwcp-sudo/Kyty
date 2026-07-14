@@ -1456,6 +1456,21 @@ struct SpirvValue
 	String8   value;
 };
 
+// A reconstructed natural loop (single back-edge, single header). GCN emits a
+// loop as a backward s_branch to an earlier label; SPIR-V needs the header to
+// carry an OpLoopMerge naming a merge block (the exit) and a continue block
+// (the sole re-entry). See DetectLoops().
+struct LoopInfo
+{
+	uint32_t header_pc    = 0; // loop header = back-edge target
+	uint32_t back_edge_pc = 0; // PC of the unconditional back-edge s_branch
+	uint32_t merge_pc     = 0; // loop exit PC (== back_edge_pc + 4)
+	String8  header_label;     // SPIR-V label emitted at header_pc
+	String8  merge_label;      // SPIR-V label emitted at merge_pc
+	String8  continue_label;   // synthetic continue block (holds the back-edge)
+	String8  body_label;       // synthetic loop-body entry (header splits into merge+body)
+};
+
 class Spirv
 {
 public:
@@ -1499,6 +1514,43 @@ public:
 		*field  = m_extended_mapping[offset][1];
 	}
 
+	// Loop reconstruction lookups, used by WriteLabel and the branch recompilers.
+	[[nodiscard]] const LoopInfo* LoopHeaderAt(uint32_t pc) const
+	{
+		for (const auto& l: m_loops)
+		{
+			if (l.header_pc == pc)
+			{
+				return &l;
+			}
+		}
+		return nullptr;
+	}
+	[[nodiscard]] const LoopInfo* LoopBackEdgeAt(uint32_t pc) const
+	{
+		for (const auto& l: m_loops)
+		{
+			if (l.back_edge_pc == pc)
+			{
+				return &l;
+			}
+		}
+		return nullptr;
+	}
+	// A conditional branch at branch_pc to target_pc is a loop break iff it lives
+	// inside the loop body and jumps to that loop's merge block.
+	[[nodiscard]] const LoopInfo* LoopExitBranch(uint32_t branch_pc, uint32_t target_pc) const
+	{
+		for (const auto& l: m_loops)
+		{
+			if (l.merge_pc == target_pc && branch_pc >= l.header_pc && branch_pc < l.back_edge_pc)
+			{
+				return &l;
+			}
+		}
+		return nullptr;
+	}
+
 private:
 	struct Variable
 	{
@@ -1535,6 +1587,7 @@ private:
 	void FindVariables();
 
 	void ModifyCode();
+	void DetectLoops();
 
 	void DetectFetch();
 
@@ -1549,6 +1602,7 @@ private:
 	// ShaderBindParameters          m_bind_params;
 
 	Core::Array2<int, 64, 2> m_extended_mapping {};
+	Vector<LoopInfo>         m_loops;
 };
 
 // NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
@@ -4050,6 +4104,19 @@ KYTY_RECOMPILER_FUNC(Recompile_SBranch_Label)
 
 	EXIT_NOT_IMPLEMENTED(!operand_is_constant(inst.src[0]));
 
+	// Loop back-edge: enter the synthetic continue block, which is the sole block
+	// that re-enters the header (required by SPIR-V structured control flow).
+	if (const auto* loop = spirv->LoopBackEdgeAt(inst.pc); loop != nullptr)
+	{
+		static const char* loop_text = R"(
+                OpBranch %<continue>
+                %<continue> = OpLabel
+                OpBranch %<header>
+)";
+		*dst_source += String8(loop_text).ReplaceStr("<continue>", loop->continue_label).ReplaceStr("<header>", loop->header_label);
+		return true;
+	}
+
 	EXIT_NOT_IMPLEMENTED(code.ReadBlock(ShaderLabel(inst).GetDst()).is_discard);
 
 	String8 label = ShaderLabel(inst).ToString();
@@ -4072,6 +4139,25 @@ KYTY_RECOMPILER_FUNC(Recompile_SCbranch_XXX_Label)
 	const auto& next_inst = code.GetInstructions().At(index + 1);
 
 	EXIT_NOT_IMPLEMENTED(!operand_is_constant(inst.src[0]));
+
+	// Loop break: a conditional branch out of a loop body to its merge block.
+	// This is a structured break, not a selection, so it takes no
+	// OpSelectionMerge — the target is already the loop's merge block.
+	if (const auto* loop = spirv->LoopExitBranch(inst.pc, ShaderLabel(inst).GetDst()); loop != nullptr)
+	{
+		static const char* loop_text = R"(
+        <param0>
+        <param1>
+               OpBranchConditional %cc_b_<index> %<merge> %t230_<index>
+        %t230_<index> = OpLabel
+)";
+		*dst_source += String8(loop_text)
+		                   .ReplaceStr("<param0>", param[0])
+		                   .ReplaceStr("<param1>", param[1])
+		                   .ReplaceStr("<merge>", loop->merge_label)
+		                   .ReplaceStr("<index>", String8::FromPrintf("%u", index));
+		return true;
+	}
 
 	// TODO(): analyze control flow graph
 	auto label            = ShaderLabel(inst);
@@ -7565,6 +7651,32 @@ void Spirv::WriteLabel(int index)
 			auto& label = labels[i - 1];
 			if (!label.IsDisabled() && label.GetDst() == inst.pc)
 			{
+				bool skip_branch = ((instructions.At(index - 1).type == ShaderInstructionType::SEndpgm ||
+				                     instructions.At(index - 1).type == ShaderInstructionType::SBranch) &&
+				                    labels_num == 0);
+
+				// Loop header: open the header block, declare the loop merge, then
+				// branch into a synthetic body block. DetectLoops guarantees a loop
+				// header has exactly this one (back-edge) label at its PC.
+				if (const auto* loop = LoopHeaderAt(inst.pc); loop != nullptr)
+				{
+					static const char* loop_text = R"(
+                   <branch>
+                   %<header> = OpLabel
+                   OpLoopMerge %<merge> %<continue> None
+                   OpBranch %<body>
+                   %<body> = OpLabel
+		)";
+					m_source += String8(loop_text)
+					                .ReplaceStr("<branch>", (skip_branch ? "" : "OpBranch %<header>"))
+					                .ReplaceStr("<header>", loop->header_label)
+					                .ReplaceStr("<merge>", loop->merge_label)
+					                .ReplaceStr("<continue>", loop->continue_label)
+					                .ReplaceStr("<body>", loop->body_label);
+					labels_num++;
+					continue;
+				}
+
 				static const char* text = R"(
                    <branch>
                    %<label> = OpLabel
@@ -7572,9 +7684,7 @@ void Spirv::WriteLabel(int index)
 
 				bool discard = m_code.ReadBlock(label.GetDst()).is_discard;
 
-				bool skip_branch = (discard || ((instructions.At(index - 1).type == ShaderInstructionType::SEndpgm ||
-				                                 instructions.At(index - 1).type == ShaderInstructionType::SBranch) &&
-				                                labels_num == 0));
+				skip_branch = skip_branch || discard;
 
 				m_source +=
 				    String8(text).ReplaceStr("<branch>", (skip_branch ? "" : "OpBranch %<label>")).ReplaceStr("<label>", label.ToString());
@@ -7633,6 +7743,80 @@ void Spirv::ModifyCode()
 			// Duplicate discard block if there are different branches with the same label
 			m_code.GetInstructions().Add(block);
 		}
+	}
+}
+
+// Reconstruct structured loops from GCN backward branches. GCN lowers a loop to
+// a backward s_branch (target PC < branch PC); SPIR-V instead requires the loop
+// header to carry an OpLoopMerge. We recognize the natural-loop shape
+//
+//   header:  <cond>  s_cbranch_scc* merge   ; loop-condition break
+//            <body>   s_branch header        ; unconditional back-edge
+//   merge:   ...
+//
+// and record enough to emit OpLoopMerge + a synthetic continue block. Anything
+// outside this shape (conditional back-edge / do-while, multiple back-edges to
+// one header, nested loops, missing merge label) fails loud rather than
+// producing invalid SPIR-V. Shaders with no backward branch leave m_loops empty
+// and take exactly the original forward-only code paths.
+void Spirv::DetectLoops()
+{
+	m_loops.Clear();
+
+	const auto& labels = m_code.GetLabels();
+	const auto& insts  = m_code.GetInstructions();
+
+	for (const auto& be: labels)
+	{
+		if (be.IsDisabled() || be.GetDst() >= be.GetSrc())
+		{
+			continue; // forward branch (or disabled) — not a loop back-edge
+		}
+
+		// The back-edge must be an unconditional s_branch (loop bottom).
+		auto be_idx = insts.Find(be.GetSrc(), [](const auto& i, auto pc) { return i.pc == pc; });
+		EXIT_NOT_IMPLEMENTED(!insts.IndexValid(be_idx));
+		EXIT_NOT_IMPLEMENTED(insts.At(be_idx).type != ShaderInstructionType::SBranch);
+
+		LoopInfo li;
+		li.header_pc    = be.GetDst();
+		li.back_edge_pc = be.GetSrc();
+		li.merge_pc     = be.GetSrc() + 4; // exit falls through past the back-edge branch
+		li.header_label = be.ToString();
+
+		// Exactly one label targets the header (the back-edge). A second target
+		// would mean a forward jump into the loop — not the natural shape.
+		int header_targets = 0;
+		int merge_targets  = 0;
+		for (const auto& l: labels)
+		{
+			if (l.IsDisabled())
+			{
+				continue;
+			}
+			if (l.GetDst() == li.header_pc)
+			{
+				header_targets++;
+			}
+			if (l.GetDst() == li.merge_pc)
+			{
+				li.merge_label = l.ToString();
+				merge_targets++;
+			}
+			// No nested/overlapping loop: no other back-edge whose branch sits
+			// strictly inside this loop body.
+			if (l.GetDst() < l.GetSrc() && l.GetSrc() > li.header_pc && l.GetSrc() < li.back_edge_pc)
+			{
+				EXIT_NOT_IMPLEMENTED(true);
+			}
+		}
+		EXIT_NOT_IMPLEMENTED(header_targets != 1);
+		EXIT_NOT_IMPLEMENTED(merge_targets != 1);
+
+		li.continue_label = String8::FromPrintf("loop_cont_%04" PRIx32, li.header_pc);
+		li.body_label     = String8::FromPrintf("loop_body_%04" PRIx32, li.header_pc);
+
+		m_loops.Add(li);
 	}
 }
 
@@ -7798,6 +7982,7 @@ void Spirv::DetectFetch()
 void Spirv::WriteInstructions()
 {
 	ModifyCode();
+	DetectLoops();
 
 	int         index        = -1;
 	const auto& instructions = m_code.GetInstructions();
