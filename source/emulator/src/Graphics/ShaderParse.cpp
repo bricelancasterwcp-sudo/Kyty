@@ -2333,26 +2333,40 @@ KYTY_SHADER_PARSER(shader_parse_exp)
 		default: break;
 	}
 
-	if (inst.format == ShaderInstructionFormat::Unknown && done == 0 && compr == 0 && vm == 0 && (en == 0xf || en == 0x3))
+	if (inst.format == ShaderInstructionFormat::Unknown && done == 0 && compr == 0 && vm == 0 && en != 0)
 	{
-		if (en == 0x3)
+		// A partial varying export -- e.g. a vec2 uv (en=0x3), a vec3 normal/color
+		// (en=0x7) or a scalar (en=0x1) export only the enabled channels; the
+		// disabled channels' vsrc slots are "unused". Point each disabled channel
+		// at an enabled register so the vec4 store below reads real variables; the
+		// PS consumes only the enabled channels, so the filler values don't matter.
+		int first_en = -1;
+		for (int c = 0; c < 4; c++)
 		{
-			// A partial varying export -- e.g. a vec2 uv exports only x,y (en=0x3);
-			// the z,w channels are disabled and their vsrc slots are "unused". Point
-			// the disabled channels at valid enabled registers so the vec4 store
-			// below reads real variables; the interpolants the PS actually consumes
-			// (the enabled channels) are unaffected.
-			inst.src[2] = inst.src[0];
-			inst.src[3] = inst.src[1];
+			if (((en >> static_cast<uint32_t>(c)) & 0x1u) != 0)
+			{
+				first_en = c;
+				break;
+			}
 		}
-		switch (target)
+		if (first_en >= 0)
 		{
-			case 0x20: inst.format = ShaderInstructionFormat::Param0Vsrc0Vsrc1Vsrc2Vsrc3; break;
-			case 0x21: inst.format = ShaderInstructionFormat::Param1Vsrc0Vsrc1Vsrc2Vsrc3; break;
-			case 0x22: inst.format = ShaderInstructionFormat::Param2Vsrc0Vsrc1Vsrc2Vsrc3; break;
-			case 0x23: inst.format = ShaderInstructionFormat::Param3Vsrc0Vsrc1Vsrc2Vsrc3; break;
-			case 0x24: inst.format = ShaderInstructionFormat::Param4Vsrc0Vsrc1Vsrc2Vsrc3; break;
-			default: break;
+			for (int c = 0; c < 4; c++)
+			{
+				if (((en >> static_cast<uint32_t>(c)) & 0x1u) == 0)
+				{
+					inst.src[c] = inst.src[first_en];
+				}
+			}
+			switch (target)
+			{
+				case 0x20: inst.format = ShaderInstructionFormat::Param0Vsrc0Vsrc1Vsrc2Vsrc3; break;
+				case 0x21: inst.format = ShaderInstructionFormat::Param1Vsrc0Vsrc1Vsrc2Vsrc3; break;
+				case 0x22: inst.format = ShaderInstructionFormat::Param2Vsrc0Vsrc1Vsrc2Vsrc3; break;
+				case 0x23: inst.format = ShaderInstructionFormat::Param3Vsrc0Vsrc1Vsrc2Vsrc3; break;
+				case 0x24: inst.format = ShaderInstructionFormat::Param4Vsrc0Vsrc1Vsrc2Vsrc3; break;
+				default: break;
+			}
 		}
 	}
 
