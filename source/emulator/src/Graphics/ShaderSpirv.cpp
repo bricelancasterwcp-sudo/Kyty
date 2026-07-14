@@ -6351,6 +6351,7 @@ const RecompilerFunc* RecompFunc(ShaderInstructionType type, ShaderInstructionFo
 
 	{Recompile_Skip,                           ShaderInstructionType::SInstPrefetch,       ShaderInstructionFormat::Imm,         {""}},
 	{Recompile_Skip,                           ShaderInstructionType::SSendmsg,            ShaderInstructionFormat::Imm,         {""}},
+	{Recompile_Skip,                           ShaderInstructionType::SSetprio,            ShaderInstructionFormat::Imm,         {""}},
     {Recompile_Skip,                           ShaderInstructionType::SWaitcnt,            ShaderInstructionFormat::Imm,         {""}},
 
     {Recompile_TBufferLoadFormatX_Vdata1VaddrSvSoffsIdxenFloat1,          ShaderInstructionType::TBufferLoadFormatX,    ShaderInstructionFormat::Vdata1VaddrSvSoffsIdxenFloat1,  {""}},
@@ -8067,6 +8068,14 @@ void Spirv::FindVariables()
 		{
 			int storage_start = m_bind->samplers.start_register[i] + shift_regs;
 			AddVariable(ShaderOperandType::Sgpr, storage_start, 8);
+		}
+		// Direct SGPRs are seeded from push constants in WriteHeader (OpStore %s<reg>),
+		// so their register variables must be declared here even when the shader code
+		// never reads them (e.g. an unused base_vertex/start_instance the loader still
+		// preloads). Without this the seeding store references an undeclared id.
+		for (int i = 0; i < m_bind->direct_sgprs.sgprs_num; i++)
+		{
+			AddVariable(ShaderOperandType::Sgpr, m_bind->direct_sgprs.start_register[i] + shift_regs, 1);
 		}
 	}
 }

@@ -1376,14 +1376,27 @@ static void ShaderGetDirectSgpr(ShaderDirectSgprsResources* info, int start_inde
 // reused for an unrelated pointer and that no fetch hides behind an early conditional s_endpgm.
 // Holds for straight-line compiler output; branchy shaders that reuse the pair would need real
 // dataflow analysis here.
-static int ShaderFindIndirectTableOffsets(const uint32_t* code, int base_register, uint32_t* offsets_dw, int max_num)
+// Recover the real SGPR pair a 0x1c indirect resource table is dereferenced
+// through, from the shader code. psbc/ACO can report the 0x1c start_register one
+// higher than the SGPR pair its code actually uses (an off-by-one correlated
+// with the fetch prolog, observed on every psbc VS descriptor set; the PS side
+// and real Sony shaders match). The base is the SBASE of the 128/256-bit
+// descriptor fetch (an s_load_dword* through the pointer).
+//
+// We ONLY accept the usage-reported register (exact — real Sony shaders and the
+// PS 0x1c path are an exact no-op) or that register minus one (the deterministic
+// psbc off-by-one). Any other layout is not something we can safely reconcile:
+// guessing an arbitrary descriptor-load base risks selecting an SGPR the CPU
+// never populated (via SET_SH_REG), which would be read as a garbage guest
+// pointer and crash. So fail loud instead of guessing.
+static int ShaderFindIndirectTableBase(const uint32_t* code, int usage_register)
 {
 	EXIT_IF(code == nullptr);
-	EXIT_IF(offsets_dw == nullptr);
 
 	constexpr uint32_t MAX_CODE_LENGTH_DW = 0x100000;
 
-	int num = 0;
+	bool exact     = false;
+	bool minus_one = false;
 
 	for (uint32_t i = 0; i < MAX_CODE_LENGTH_DW; i++)
 	{
@@ -1396,46 +1409,180 @@ static int ShaderFindIndirectTableOffsets(const uint32_t* code, int base_registe
 
 		if ((inst & 0xF8000000u) == 0xC0000000u) // SMRD
 		{
-			uint32_t op     = (inst >> 22u) & 0x1fu;
-			uint32_t sbase  = ((inst >> 9u) & 0x3fu) * 2;
-			uint32_t imm    = (inst >> 8u) & 0x1u;
-			uint32_t offset = inst & 0xffu; // dwords (when imm == 1)
+			uint32_t op    = (inst >> 22u) & 0x1fu;
+			uint32_t sbase = ((inst >> 9u) & 0x3fu) * 2;
 
-			if (op <= 0x04 && sbase == static_cast<uint32_t>(base_register)) // s_load_dword..dwordx16 through the table pointer
+			if (op <= 0x04) // s_load_dword..dwordx16: a descriptor fetch through a pointer
 			{
-				// Only the 128-bit descriptor fetch with an immediate offset is supported
-				EXIT_NOT_IMPLEMENTED(op != 0x02); // not s_load_dwordx4
-				EXIT_NOT_IMPLEMENTED(imm != 1);
-
-				bool found = false;
-				for (int j = 0; j < num; j++)
+				if (sbase == static_cast<uint32_t>(usage_register))
 				{
-					if (offsets_dw[j] == offset)
-					{
-						found = true;
-						break;
-					}
-				}
-
-				if (!found)
+					exact = true;
+				} else if (usage_register > 0 && sbase == static_cast<uint32_t>(usage_register - 1))
 				{
-					EXIT_NOT_IMPLEMENTED(num >= max_num);
-					offsets_dw[num++] = offset;
+					minus_one = true;
 				}
 			}
 		}
 	}
 
-	// ascending order (insertion sort; the list is tiny)
+	EXIT_NOT_IMPLEMENTED(!exact && !minus_one);
+	return exact ? usage_register : (usage_register - 1);
+}
+
+enum class ShaderIndirectKind
+{
+	Buffer,  // V#: consumed by s_buffer_load (or an unconsumed 128-bit descriptor)
+	Texture, // T#: consumed by an image_* instruction as the resource (SRSRC)
+	Sampler, // S#: consumed by an image_sample as the sampler (SSAMP)
+};
+
+struct ShaderIndirectEntry
+{
+	uint32_t           offset_dw; // table dword offset (the s_load immediate)
+	ShaderIndirectKind kind;
+};
+
+// Find the descriptors a 0x1c table pointer is dereferenced to, and classify each
+// as a buffer V#, a texture T# or a sampler S#. A table entry's WIDTH separates a
+// T# (256-bit, s_load_dwordx8) from the rest but NOT an S# from a constant V#
+// (both are 128-bit, s_load_dwordx4), so classification is by downstream CONSUMER:
+//   pass 1 collects every s_load_dword* through base_register as {offset, sdst, width};
+//   pass 2 records which SGPRs feed an s_buffer_load (V#), an image_* resource
+//          operand (T#), or an image_sample sampler operand (S#);
+//   then each descriptor is matched by the SGPR its load wrote (sdst).
+// Straight-line output only (no liveness/branch/SGPR-rename tracking — same caveat
+// as ShaderFindIndirectTableBase and the rest of this path; true for ACO output,
+// which names the very SGPRs the loads wrote).
+static int ShaderFindIndirectTableEntries(const uint32_t* code, int base_register, ShaderIndirectEntry* entries, int max_num)
+{
+	EXIT_IF(code == nullptr);
+	EXIT_IF(entries == nullptr);
+
+	constexpr uint32_t MAX_CODE_LENGTH_DW = 0x100000;
+	constexpr int      MAX_LOADS          = 16;
+	constexpr int      MAX_CONSUMERS      = 32;
+
+	uint32_t offsets[MAX_LOADS];
+	uint32_t sdsts[MAX_LOADS];
+	uint32_t widths[MAX_LOADS];
+	int      num = 0;
+
+	uint32_t buffer_regs[MAX_CONSUMERS];
+	int      buffer_num = 0;
+	uint32_t texture_regs[MAX_CONSUMERS];
+	int      texture_num = 0;
+	uint32_t sampler_regs[MAX_CONSUMERS];
+	int      sampler_num = 0;
+
+	for (uint32_t i = 0; i < MAX_CODE_LENGTH_DW; i++)
+	{
+		uint32_t inst = code[i];
+
+		if (inst == 0xBF810000) // s_endpgm
+		{
+			break;
+		}
+
+		if ((inst & 0xF8000000u) == 0xC0000000u) // SMRD
+		{
+			uint32_t op    = (inst >> 22u) & 0x1fu;
+			uint32_t sbase = ((inst >> 9u) & 0x3fu) * 2;
+
+			if (op >= 0x08 && op <= 0x0c) // s_buffer_load_dword..x16: consumes a V# in sbase
+			{
+				if (buffer_num < MAX_CONSUMERS)
+				{
+					buffer_regs[buffer_num++] = sbase;
+				}
+			} else if (op <= 0x04 && sbase == static_cast<uint32_t>(base_register)) // descriptor fetch through the table pointer
+			{
+				uint32_t imm  = (inst >> 8u) & 0x1u;
+				uint32_t off  = inst & 0xffu; // dwords (imm == 1)
+				uint32_t sdst = (inst >> 15u) & 0x7fu;
+
+				// s_load_dwordx4 (128-bit V#/S#) and s_load_dwordx8 (256-bit T#) only
+				EXIT_NOT_IMPLEMENTED(op != 0x02 && op != 0x03);
+				EXIT_NOT_IMPLEMENTED(imm != 1);
+
+				bool found = false;
+				for (int j = 0; j < num; j++)
+				{
+					if (offsets[j] == off)
+					{
+						found = true;
+						break;
+					}
+				}
+				if (!found)
+				{
+					EXIT_NOT_IMPLEMENTED(num >= MAX_LOADS);
+					offsets[num] = off;
+					sdsts[num]   = sdst;
+					widths[num]  = (op == 0x03 ? 8u : 4u);
+					num++;
+				}
+			}
+		} else if ((inst >> 26u) == 0x3cu) // MIMG (image_*): SRSRC = T#, SSAMP = S#
+		{
+			uint32_t srsrc = ((code[i + 1] >> 16u) & 0x1fu) * 4;
+			uint32_t ssamp = ((code[i + 1] >> 21u) & 0x1fu) * 4;
+			if (texture_num < MAX_CONSUMERS)
+			{
+				texture_regs[texture_num++] = srsrc;
+			}
+			if (sampler_num < MAX_CONSUMERS)
+			{
+				sampler_regs[sampler_num++] = ssamp;
+			}
+			i++; // MIMG is two dwords
+		}
+	}
+
+	auto in_set = [](const uint32_t* set, int n, uint32_t v) {
+		for (int k = 0; k < n; k++)
+		{
+			if (set[k] == v)
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+
+	EXIT_NOT_IMPLEMENTED(num > max_num);
+	for (int i = 0; i < num; i++)
+	{
+		ShaderIndirectKind kind;
+		if (in_set(texture_regs, texture_num, sdsts[i]))
+		{
+			EXIT_NOT_IMPLEMENTED(widths[i] != 8); // a T# is 256-bit
+			kind = ShaderIndirectKind::Texture;
+		} else if (in_set(sampler_regs, sampler_num, sdsts[i]))
+		{
+			EXIT_NOT_IMPLEMENTED(widths[i] != 4); // an S# is 128-bit
+			kind = ShaderIndirectKind::Sampler;
+		} else
+		{
+			// Consumed by an s_buffer_load, or unconsumed: a 128-bit descriptor is a
+			// constant buffer V# (keeps the constant-buffer path working); a 256-bit
+			// descriptor with no image consumer is unclassifiable.
+			EXIT_NOT_IMPLEMENTED(widths[i] != 4);
+			kind = ShaderIndirectKind::Buffer;
+		}
+		entries[i].offset_dw = offsets[i];
+		entries[i].kind      = kind;
+	}
+
+	// ascending offset order (insertion sort; the list is tiny)
 	for (int i = 1; i < num; i++)
 	{
-		uint32_t v = offsets_dw[i];
-		int      j = i - 1;
-		for (; j >= 0 && offsets_dw[j] > v; j--)
+		ShaderIndirectEntry v = entries[i];
+		int                 j = i - 1;
+		for (; j >= 0 && entries[j].offset_dw > v.offset_dw; j--)
 		{
-			offsets_dw[j + 1] = offsets_dw[j];
+			entries[j + 1] = entries[j];
 		}
-		offsets_dw[j + 1] = v;
+		entries[j + 1] = v;
 	}
 
 	return num;
@@ -1614,38 +1761,54 @@ void ShaderParseUsage(uint64_t addr, ShaderParsedUsage* info, ShaderBindResource
 			{
 				EXIT_NOT_IMPLEMENTED(usage.flags != 0);
 				EXIT_NOT_IMPLEMENTED(bind->extended.used);
-				EXIT_NOT_IMPLEMENTED(usage.start_register + 1 >= HW::UserSgprInfo::SGPRS_MAX);
+				// Derive the table pointer's SGPR pair from the code (see
+				// ShaderFindIndirectTableBase) rather than trusting usage.start_register,
+				// which psbc can report one register too high on a VS descriptor set.
+				int base_register = ShaderFindIndirectTableBase(src, usage.start_register);
+				EXIT_NOT_IMPLEMENTED(base_register + 1 >= HW::UserSgprInfo::SGPRS_MAX);
 
 				bind->extended.used                    = true;
 				bind->extended.slot                    = usage.slot;
-				bind->extended.start_register          = usage.start_register;
-				bind->extended.data.fields[0]          = user_sgpr.value[usage.start_register];
-				bind->extended.data.fields[1]          = user_sgpr.value[usage.start_register + 1];
+				bind->extended.start_register          = base_register;
+				bind->extended.data.fields[0]          = user_sgpr.value[base_register];
+				bind->extended.data.fields[1]          = user_sgpr.value[base_register + 1];
 				extended_buffer                        = reinterpret_cast<uint32_t*>(bind->extended.data.Base());
 				info->extended_buffer                  = true;
-				direct_sgprs[usage.start_register]     = false;
-				direct_sgprs[usage.start_register + 1] = false;
+				direct_sgprs[base_register]     = false;
+				direct_sgprs[base_register + 1] = false;
 
 				// Unlike 0x1b, no follow-up slots describe the table entries. Register every
 				// entry the code fetches through the pointer; entry at table dword offset d
 				// maps to virtual register 16 + d (same convention as the 0x1b path).
-				{
-					uint32_t offsets_dw[ShaderStorageResources::BUFFERS_MAX];
-					int      offsets_num = ShaderFindIndirectTableOffsets(src, usage.start_register, offsets_dw,
-					                                                      ShaderStorageResources::BUFFERS_MAX);
-					EXIT_NOT_IMPLEMENTED(offsets_num <= 0);
-					for (int oi = 0; oi < offsets_num; oi++)
+					ShaderIndirectEntry entries[16];
+					int entries_num = ShaderFindIndirectTableEntries(src, base_register, entries, 16);
+					EXIT_NOT_IMPLEMENTED(entries_num <= 0);
+					for (int ei = 0; ei < entries_num; ei++)
 					{
-						EXIT_NOT_IMPLEMENTED((offsets_dw[oi] % 4) != 0); // descriptors are 16-byte aligned in the table
-						ShaderGetStorageBuffer(&bind->storage_buffers, direct_sgprs,
-						                       static_cast<int>(16 + offsets_dw[oi]),
-						                       usage.slot + static_cast<int>(offsets_dw[oi] / 4), ShaderStorageUsage::Constant,
-						                       user_sgpr, extended_buffer);
-						info->storage_buffers_constant++;
+						EXIT_NOT_IMPLEMENTED((entries[ei].offset_dw % 4) != 0); // descriptors are 16-byte aligned in the table
+						int start = static_cast<int>(16 + entries[ei].offset_dw);
+						int slot  = usage.slot + static_cast<int>(entries[ei].offset_dw / 4);
+						switch (entries[ei].kind)
+						{
+							case ShaderIndirectKind::Texture:
+								ShaderGetTextureBuffer(&bind->textures2D, direct_sgprs, start, slot, ShaderTextureUsage::ReadOnly,
+								                       user_sgpr, extended_buffer);
+								info->textures2D_readonly++;
+								EXIT_NOT_IMPLEMENTED(bind->textures2D.desc[bind->textures2D.textures_num - 1].texture.Type() != 9);
+								break;
+							case ShaderIndirectKind::Sampler:
+								ShaderGetSampler(&bind->samplers, direct_sgprs, start, slot, user_sgpr, extended_buffer);
+								info->samplers++;
+								break;
+							case ShaderIndirectKind::Buffer:
+								ShaderGetStorageBuffer(&bind->storage_buffers, direct_sgprs, start, slot, ShaderStorageUsage::Constant,
+								                       user_sgpr, extended_buffer);
+								info->storage_buffers_constant++;
+								break;
+						}
 					}
+					break;
 				}
-				break;
-			}
 
 			default: EXIT("unknown usage type: 0x%02" PRIx8 "\n", usage.type);
 		}
@@ -1841,7 +2004,13 @@ void ShaderGetInputInfoVS(const HW::VertexShaderInfo* regs, const HW::ShaderRegi
 		ShaderParseUsage(shader_addr, &usage, &info->bind, user_sgpr, user_sgpr_num);
 	}
 
-	EXIT_NOT_IMPLEMENTED(usage.extended_buffer);
+	// A VS may carry an extended (0x1c) indirect table of *constant* buffers
+	// (e.g. the MVP) -- the VS mirror of the shipped PS 0x1c path. The former
+	// blanket ban (EXIT_NOT_IMPLEMENTED(usage.extended_buffer)) is dropped; the
+	// type-specific bans below still reject any sampler/texture/RW resource in a
+	// VS extended table once it is registered, so nothing unimplemented slips
+	// through. Constant extended buffers increment storage_buffers_constant,
+	// which none of these guards forbid.
 	EXIT_NOT_IMPLEMENTED(usage.samplers > 0);
 	EXIT_NOT_IMPLEMENTED(usage.gds_pointers > 0);
 	EXIT_NOT_IMPLEMENTED(usage.storage_buffers_readonly > 0 || usage.textures2D_readonly > 0);

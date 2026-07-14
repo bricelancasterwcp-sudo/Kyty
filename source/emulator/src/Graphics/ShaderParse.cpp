@@ -253,13 +253,20 @@ KYTY_SHADER_PARSER(shader_parse_sopp)
 			inst.src_num           = 1;
 			break;
 
+		case 0x0f: // s_setprio: wave priority hint, semantically a no-op (recompiles to nothing)
+			inst.type              = ShaderInstructionType::SSetprio;
+			inst.format            = ShaderInstructionFormat::Imm;
+			inst.src[0].type       = ShaderOperandType::LiteralConstant;
+			inst.src[0].constant.u = simm;
+			inst.src_num           = 1;
+			break;
+
 		case 0x0: KYTY_NI("s_nop"); break;
 		case 0x9: KYTY_NI("s_cbranch_execnz"); break;
 		case 0xA: KYTY_NI("s_barrier"); break;
 		case 0xB: KYTY_NI("s_setkill"); break;
 		case 0xD: KYTY_NI("s_sethalt"); break;
 		case 0xE: KYTY_NI("s_sleep"); break;
-		case 0xF: KYTY_NI("s_setprio"); break;
 		case 0x11: KYTY_NI("s_sendmsghalt"); break;
 		case 0x12: KYTY_NI("s_trap"); break;
 		case 0x13: KYTY_NI("s_icache_inv"); break;
@@ -2326,8 +2333,18 @@ KYTY_SHADER_PARSER(shader_parse_exp)
 		default: break;
 	}
 
-	if (inst.format == ShaderInstructionFormat::Unknown && done == 0 && compr == 0 && vm == 0 && en == 0xf)
+	if (inst.format == ShaderInstructionFormat::Unknown && done == 0 && compr == 0 && vm == 0 && (en == 0xf || en == 0x3))
 	{
+		if (en == 0x3)
+		{
+			// A partial varying export -- e.g. a vec2 uv exports only x,y (en=0x3);
+			// the z,w channels are disabled and their vsrc slots are "unused". Point
+			// the disabled channels at valid enabled registers so the vec4 store
+			// below reads real variables; the interpolants the PS actually consumes
+			// (the enabled channels) are unaffected.
+			inst.src[2] = inst.src[0];
+			inst.src[3] = inst.src[1];
+		}
 		switch (target)
 		{
 			case 0x20: inst.format = ShaderInstructionFormat::Param0Vsrc0Vsrc1Vsrc2Vsrc3; break;

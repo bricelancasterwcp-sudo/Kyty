@@ -111,6 +111,7 @@ enum class ShaderInstructionType : uint32_t
 	SOrn2B64,
 	SSendmsg,
 	SSetpcB64,
+	SSetprio,
 	SSwappcB64,
 	SSubI32,
 	SWaitcnt,
