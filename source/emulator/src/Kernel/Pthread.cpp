@@ -2373,6 +2373,7 @@ int KYTY_SYSV_ABI KernelClockGettime(KernelClockid clock_id, KernelTimespec* tp)
 	switch (clock_id)
 	{
 		case 0: pclock_id = CLOCK_REALTIME; break;
+		case 1: // POSIX/glibc CLOCK_MONOTONIC value (as emitted by the OpenOrbis libc)
 		case 13:
 		case 4: pclock_id = CLOCK_MONOTONIC; break;
 		default: EXIT("unknown clock_id: %d", clock_id);

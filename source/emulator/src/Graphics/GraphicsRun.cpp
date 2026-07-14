@@ -665,7 +665,9 @@ void CommandProcessor::DumpConstRam(uint32_t* dst, uint32_t offset, uint32_t dw_
 void CommandProcessor::WaitRegMem32(uint32_t func, const uint32_t* addr, uint32_t ref, uint32_t mask, uint32_t poll)
 {
 	EXIT_NOT_IMPLEMENTED(func != 3);
-	EXIT_NOT_IMPLEMENTED(poll != 10);
+	// `poll` is the WAIT_REG_MEM poll interval; we poll at our own fixed rate, so
+	// its exact value doesn't affect correctness.
+	(void)poll;
 
 	BufferFlush();
 
@@ -678,7 +680,9 @@ void CommandProcessor::WaitRegMem32(uint32_t func, const uint32_t* addr, uint32_
 void CommandProcessor::WaitRegMem64(uint32_t func, const uint64_t* addr, uint64_t ref, uint64_t mask, uint32_t poll)
 {
 	EXIT_NOT_IMPLEMENTED(func != 3);
-	EXIT_NOT_IMPLEMENTED(poll != 10);
+	// `poll` is the WAIT_REG_MEM poll interval; we poll at our own fixed rate, so
+	// its exact value doesn't affect correctness.
+	(void)poll;
 
 	BufferFlush();
 
@@ -1169,10 +1173,14 @@ void CommandProcessor::WriteAtEndOfPipe64(uint32_t cache_policy, uint32_t event_
 		default: EXIT("unknown interrupt_selector\n");
 	}
 
-	if (eop_event_type == 0x04 && cache_action == 0x00 && event_index == 0x05 && source64 && !with_interrupt)
+	// 0x14 = CACHE_FLUSH_AND_INV_TS: same EOP value-write as 0x04 (BOTTOM_OF_PIPE);
+	// the cache flush/invalidate is covered by the emulator's Vulkan barriers.
+	if ((eop_event_type == 0x04 || eop_event_type == 0x14) && cache_action == 0x00 && event_index == 0x05 && source64 &&
+	    !with_interrupt)
 	{
 		GraphicsRenderWriteAtEndOfPipe64(m_sumbit_id, m_buffer[m_current_buffer], static_cast<uint64_t*>(dst_gpu_addr), value);
-	} else if (eop_event_type == 0x04 && cache_action == 0x00 && event_index == 0x05 && source32 && !with_interrupt)
+	} else if ((eop_event_type == 0x04 || eop_event_type == 0x14) && cache_action == 0x00 && event_index == 0x05 && source32 &&
+	           !with_interrupt)
 	{
 		GraphicsRenderWriteAtEndOfPipe32(m_sumbit_id, m_buffer[m_current_buffer], static_cast<uint32_t*>(dst_gpu_addr), value);
 	} else if (((eop_event_type == 0x04 && event_index == 0x05) || (eop_event_type == 0x28 && event_index == 0x05) ||
@@ -2565,10 +2573,10 @@ KYTY_CP_OP_PARSER(cp_op_acquire_mem)
 
 	uint32_t                  stall_mode   = buffer[0] >> 31u;
 	uint32_t                  cache_action = buffer[0] & 0x7fffffffu;
-	uint64_t                  size_lo      = buffer[1];
-	uint32_t                  size_hi      = buffer[2];
-	uint64_t                  base_lo      = buffer[3];
-	uint32_t                  base_hi      = buffer[4];
+	// Fold the high dwords into full 64-bit range/base so a large- or full-range
+	// acquire (size_hi/base_hi != 0) is handled, not rejected.
+	uint64_t                  size_lo      = buffer[1] | (static_cast<uint64_t>(buffer[2]) << 32u);
+	uint64_t                  base_lo      = buffer[3] | (static_cast<uint64_t>(buffer[4]) << 32u);
 	uint32_t                  poll         = buffer[5];
 	[[maybe_unused]] uint32_t gcr_cntl     = (custom ? buffer[6] : 0);
 
@@ -2577,9 +2585,8 @@ KYTY_CP_OP_PARSER(cp_op_acquire_mem)
 	uint32_t action          = ((cache_action & 0x00C00000u) >> 0x12u) | ((cache_action & 0x00058000u) >> 0xfu);
 
 	// EXIT_NOT_IMPLEMENTED(stall_mode != 1);
-	EXIT_NOT_IMPLEMENTED(size_hi != 0);
-	EXIT_NOT_IMPLEMENTED(base_hi != 0);
-	EXIT_NOT_IMPLEMENTED(poll != 10);
+	// `poll` is the poll interval; we poll at our own fixed rate.
+	(void)poll;
 
 	switch (cache_action)
 	{
@@ -2671,6 +2678,20 @@ KYTY_CP_OP_PARSER(cp_op_acquire_mem)
 			EXIT_IF(action != 0x00);
 
 			cp->MemoryBarrier();
+		}
+		break;
+
+		case 0x0605c040:
+		{
+			// target_mask:     0x00004040 (rt0 + depth)
+			// extended_action: 0x06000000 (Flush Cb & Db)
+			// action:          0x0b
+			// Combined color+depth cache flush -- a global barrier + write-back
+			// conservatively covers it (over-synchronizing is always safe).
+			EXIT_IF(extended_action != 0x06000000);
+
+			cp->MemoryBarrier();
+			cp->WriteBack();
 		}
 		break;
 

@@ -4733,7 +4733,9 @@ void GraphicsRenderDrawIndex(uint64_t submit_id, CommandBuffer* buffer, HW::Cont
 	VkIndexType index_type = VK_INDEX_TYPE_UINT16;
 	uint64_t    index_size = 0;
 
-	switch (index_type_and_size)
+	// Low 2 bits = INDEX_TYPE (0=16-bit, 1=32-bit); higher bits carry MTYPE /
+	// memory-type hints that don't affect the index-buffer layout we read.
+	switch (index_type_and_size & 0x3u)
 	{
 		case 0:
 			index_type = VK_INDEX_TYPE_UINT16;
@@ -4747,7 +4749,9 @@ void GraphicsRenderDrawIndex(uint64_t submit_id, CommandBuffer* buffer, HW::Cont
 	}
 
 	EXIT_NOT_IMPLEMENTED(flags != 0);
-	EXIT_NOT_IMPLEMENTED(type != 1);
+	// `type` is a draw-initiator field (source-select etc.); it doesn't change the
+	// indexed draw we issue, so accept any value rather than only 1.
+	(void)type;
 
 	RenderDepthInfo depth_info;
 	FindRenderDepthInfo(submit_id, buffer, *ctx, &depth_info);
