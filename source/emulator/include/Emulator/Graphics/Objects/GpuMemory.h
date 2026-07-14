@@ -92,6 +92,7 @@ public:
 void GpuMemoryInit();
 
 void  GpuMemorySetAllocatedRange(uint64_t vaddr, uint64_t size);
+bool  GpuMemoryIsAllocated(uint64_t vaddr, uint64_t size);
 void  GpuMemoryFree(GraphicContext* ctx, uint64_t vaddr, uint64_t size, bool unmap);
 void* GpuMemoryCreateObject(uint64_t submit_id, GraphicContext* ctx, CommandBuffer* buffer, uint64_t vaddr, uint64_t size,
                             const GpuObject& info);

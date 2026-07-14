@@ -920,6 +920,17 @@ static int register_buffers_internal(VideoOutConfig* ctx, int set_id, int start_
 
 		EXIT_NOT_IMPLEMENTED((reinterpret_cast<uint64_t>(addresses[i]) & (buffer_align - 1u)) != 0);
 
+		// A scanout buffer is inherently GPU-accessible, but a title may map
+		// its framebuffer memory without GPU access (gpu_mode = NoAccess), so
+		// no GPU heap is registered for it. Register one here so the buffer's
+		// vulkan object can be created (seen with GNM homebrew whose display
+		// buffers are mapped read/write on the CPU side only).
+		auto fb_vaddr = reinterpret_cast<uint64_t>(addresses[i]);
+		if (!Graphics::GpuMemoryIsAllocated(fb_vaddr, buffer_size))
+		{
+			Graphics::GpuMemorySetAllocatedRange(fb_vaddr, buffer_size);
+		}
+
 		ctx->buffers[i + start_index].set_id        = set_id;
 		ctx->buffers[i + start_index].buffer        = addresses[i];
 		ctx->buffers[i + start_index].buffer_size   = buffer_size;

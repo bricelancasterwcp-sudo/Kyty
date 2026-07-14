@@ -2070,6 +2070,13 @@ void GpuMemorySetAllocatedRange(uint64_t vaddr, uint64_t size)
 	g_gpu_memory->SetAllocatedRange(vaddr, size);
 }
 
+bool GpuMemoryIsAllocated(uint64_t vaddr, uint64_t size)
+{
+	EXIT_IF(g_gpu_memory == nullptr);
+
+	return g_gpu_memory->IsAllocated(vaddr, size);
+}
+
 void GpuMemoryFree(GraphicContext* ctx, uint64_t vaddr, uint64_t size, bool unmap)
 {
 	EXIT_IF(g_gpu_memory == nullptr);
