@@ -102,12 +102,17 @@ static uintptr_t align_up(uintptr_t addr, uint64_t alignment)
 
 [[maybe_unused]] static bool is_mmaped(void* ptr, size_t length);
 
-// The emulator packs guest page numbers (vaddr >> 12) into 32 bits, so guest
-// allocations must stay below 2^44. Linux mmap(NULL, ...) returns ~47-bit
-// addresses, so steer hint-less allocations into a low window instead (the
-// Windows build achieves this by relocating the host image to 0x100000000000).
-constexpr uintptr_t LOW_VA_START = 0x0000010000000000u; // 1 TiB
-constexpr uintptr_t LOW_VA_END   = 0x00000e0000000000u; // 14 TiB < 2^44
+// Guest allocations must satisfy two limits, so steer hint-less allocations
+// into a low window (Linux mmap(NULL, ...) otherwise returns ~47-bit
+// addresses; the Windows build relocates the host image to 0x100000000000):
+//   - The emulator packs guest page numbers (vaddr >> 12) into 32 bits, so
+//     addresses must stay below 2^44.
+//   - GNM render/depth target base registers store (base >> 8) in 32 bits, so
+//     any address the GPU renders into must stay below 2^40 or it truncates.
+// The tighter 2^40 bound governs. The window still starts well above the guest
+// module region (~0x900000000, growing upward).
+constexpr uintptr_t LOW_VA_START = 0x0000002000000000u; // 128 GiB
+constexpr uintptr_t LOW_VA_END   = 0x0000010000000000u; // 1 TiB = 2^40
 
 static uintptr_t g_low_va_hint = LOW_VA_START;
 

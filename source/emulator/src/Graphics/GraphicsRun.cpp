@@ -3165,6 +3165,11 @@ KYTY_CP_OP_PARSER(cp_op_nop)
 		{
 			return cp_op_marker(cp, cmd_id, buffer, dw, num_dw);
 		}
+
+		// A plain NOP with no Kyty marker is padding/alignment (real command
+		// buffers, e.g. from freegnm, insert these). Skip its payload instead
+		// of aborting.
+		return ((cmd_id >> 16u) & 0x3fffu) + 1u;
 	}
 
 	auto hw_ctx = g_hw_sh_custom_func[r];
