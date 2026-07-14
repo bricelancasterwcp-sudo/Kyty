@@ -2373,6 +2373,58 @@ void WindowDrawBuffer(VideoOutVulkanImage* image)
 	vkResetFences(g_window_ctx->graphic_ctx.device, 1, &g_window_ctx->swapchain->present_complete_fence);
 
 	auto* blt_src_image = image;
+
+	// One-shot base64 dump of the presented image (KYTY_DUMP_FRAME), decoded
+	// host-side. Reads the scanout image back to host memory.
+	if (getenv("KYTY_DUMP_FRAME") != nullptr)
+	{
+		static int s_dump_n = 0;
+		if (s_dump_n++ == 120)
+		{
+			uint32_t w    = image->extent.width;
+			uint32_t h    = image->extent.height;
+			auto*    host = new uint8_t[static_cast<size_t>(w) * h * 4];
+			UtilFillBuffer(&g_window_ctx->graphic_ctx, host, static_cast<uint64_t>(w) * h * 4, w, image,
+			               static_cast<uint64_t>(image->layout));
+
+			static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+			const int         step  = 4;
+			int               ow    = static_cast<int>(w) / step;
+			int               oh    = static_cast<int>(h) / step;
+			Kyty::printf("KFRAME_BEGIN %d %d\n", ow, oh);
+			uint8_t line[57 * 3];
+			char    out[57 * 4 + 1];
+			int     col = 0;
+			for (int y = 0; y < oh; y++)
+			{
+				for (int x = 0; x < ow; x++)
+				{
+					const uint8_t* p = host + (static_cast<size_t>(y * step) * w + x * step) * 4; // BGRA
+					line[col * 3 + 0] = p[2];                                                      // R
+					line[col * 3 + 1] = p[1];                                                      // G
+					line[col * 3 + 2] = p[0];                                                      // B
+					col++;
+					if (col == 57 || (y == oh - 1 && x == ow - 1))
+					{
+						int oi = 0;
+						for (int i = 0; i < col * 3; i += 3)
+						{
+							uint32_t n = (line[i] << 16) | (line[i + 1] << 8) | line[i + 2];
+							out[oi++]  = b64[(n >> 18) & 0x3f];
+							out[oi++]  = b64[(n >> 12) & 0x3f];
+							out[oi++]  = b64[(n >> 6) & 0x3f];
+							out[oi++]  = b64[n & 0x3f];
+						}
+						out[oi] = '\0';
+						Kyty::printf("KF %s\n", out);
+						col = 0;
+					}
+				}
+			}
+			Kyty::printf("KFRAME_END\n");
+			delete[] host;
+		}
+	}
 	auto* blt_dst_image = g_window_ctx->swapchain;
 
 	EXIT_IF(blt_src_image == nullptr);
