@@ -774,9 +774,17 @@ static void z_check(const HW::DepthRenderTarget& z)
 			EXIT_NOT_IMPLEMENTED(z.htile_surface.dst_outside_zero_to_one != 0x00000000);
 		} else
 		{
-			EXIT_NOT_IMPLEMENTED(z.depth_info.addr5_swizzle_mask != 0x00000001);
+			// These are guest depth-buffer TILING params. Kyty renders depth into a
+			// Vulkan-managed transient attachment created only from format/width/height
+			// (DepthStencilBufferObject, ~line 3939) and never reads the guest-tiled
+			// depth memory, so the exact tiling doesn't affect correctness for a
+			// non-sampled, non-htile depth buffer. Accept the freegnm/gpa-computed
+			// tiling (addr5_swizzle_mask 0, pipe_config 0x10, htile preload 0) in
+			// addition to the values Kyty was originally tested against.
+			EXIT_NOT_IMPLEMENTED(z.depth_info.addr5_swizzle_mask != 0x00000001 && z.depth_info.addr5_swizzle_mask != 0x00000000);
 			EXIT_NOT_IMPLEMENTED(z.depth_info.array_mode != 0x00000004);
-			EXIT_NOT_IMPLEMENTED(z.depth_info.pipe_config != (Config::IsNeo() ? 0x00000012 : 0x0c));
+			EXIT_NOT_IMPLEMENTED(z.depth_info.pipe_config != (Config::IsNeo() ? 0x00000012 : 0x0c) &&
+			                     z.depth_info.pipe_config != (Config::IsNeo() ? 0x00000010 : 0x0c));
 			EXIT_NOT_IMPLEMENTED(z.depth_info.bank_width != 0x00000000);
 			// EXIT_NOT_IMPLEMENTED(z.depth_info.bank_height != (Config::IsNeo() ? 0x00000001 : 2));
 			// EXIT_NOT_IMPLEMENTED(z.depth_info.macro_tile_aspect != (Config::IsNeo() ? 0x00000000 : 2));
@@ -784,7 +792,7 @@ static void z_check(const HW::DepthRenderTarget& z)
 			EXIT_NOT_IMPLEMENTED(z.htile_surface.linear != 0x00000000);
 			EXIT_NOT_IMPLEMENTED(z.htile_surface.full_cache != 0x00000000);
 			EXIT_NOT_IMPLEMENTED(z.htile_surface.htile_uses_preload_win != 0x00000000);
-			EXIT_NOT_IMPLEMENTED(z.htile_surface.preload != 0x00000001);
+			EXIT_NOT_IMPLEMENTED(z.htile_surface.preload != 0x00000001 && z.htile_surface.preload != 0x00000000);
 			EXIT_NOT_IMPLEMENTED(z.htile_surface.prefetch_width != 0x00000000);
 			EXIT_NOT_IMPLEMENTED(z.htile_surface.prefetch_height != 0x00000000);
 			EXIT_NOT_IMPLEMENTED(z.htile_surface.dst_outside_zero_to_one != 0x00000000);
