@@ -1367,6 +1367,80 @@ static void ShaderGetDirectSgpr(ShaderDirectSgprsResources* info, int start_inde
 	info->sgprs_num++;
 }
 
+// Usage type 0x1c (PtrIndirectResourceTable): the user SGPR pair holds a pointer to a table of
+// 128-bit resource descriptors, but (unlike 0x1b) no follow-up usage slots describe the entries.
+// Recover the referenced table dwords from the code itself: every V# is fetched by the shader
+// with "s_load_dwordx4 s[..], s[base:base+1], imm" (SMRD, PS4 encoding). Returns the number of
+// distinct dword offsets found (ascending order).
+// NOTE: the scan is linear with no liveness tracking — it assumes the pointer pair is not later
+// reused for an unrelated pointer and that no fetch hides behind an early conditional s_endpgm.
+// Holds for straight-line compiler output; branchy shaders that reuse the pair would need real
+// dataflow analysis here.
+static int ShaderFindIndirectTableOffsets(const uint32_t* code, int base_register, uint32_t* offsets_dw, int max_num)
+{
+	EXIT_IF(code == nullptr);
+	EXIT_IF(offsets_dw == nullptr);
+
+	constexpr uint32_t MAX_CODE_LENGTH_DW = 0x100000;
+
+	int num = 0;
+
+	for (uint32_t i = 0; i < MAX_CODE_LENGTH_DW; i++)
+	{
+		uint32_t inst = code[i];
+
+		if (inst == 0xBF810000) // s_endpgm
+		{
+			break;
+		}
+
+		if ((inst & 0xF8000000u) == 0xC0000000u) // SMRD
+		{
+			uint32_t op     = (inst >> 22u) & 0x1fu;
+			uint32_t sbase  = ((inst >> 9u) & 0x3fu) * 2;
+			uint32_t imm    = (inst >> 8u) & 0x1u;
+			uint32_t offset = inst & 0xffu; // dwords (when imm == 1)
+
+			if (op <= 0x04 && sbase == static_cast<uint32_t>(base_register)) // s_load_dword..dwordx16 through the table pointer
+			{
+				// Only the 128-bit descriptor fetch with an immediate offset is supported
+				EXIT_NOT_IMPLEMENTED(op != 0x02); // not s_load_dwordx4
+				EXIT_NOT_IMPLEMENTED(imm != 1);
+
+				bool found = false;
+				for (int j = 0; j < num; j++)
+				{
+					if (offsets_dw[j] == offset)
+					{
+						found = true;
+						break;
+					}
+				}
+
+				if (!found)
+				{
+					EXIT_NOT_IMPLEMENTED(num >= max_num);
+					offsets_dw[num++] = offset;
+				}
+			}
+		}
+	}
+
+	// ascending order (insertion sort; the list is tiny)
+	for (int i = 1; i < num; i++)
+	{
+		uint32_t v = offsets_dw[i];
+		int      j = i - 1;
+		for (; j >= 0 && offsets_dw[j] > v; j--)
+		{
+			offsets_dw[j + 1] = offsets_dw[j];
+		}
+		offsets_dw[j + 1] = v;
+	}
+
+	return num;
+}
+
 void ShaderCalcBindingIndices(ShaderBindResources* bind)
 {
 	KYTY_PROFILER_FUNCTION();
@@ -1535,6 +1609,43 @@ void ShaderParseUsage(uint64_t addr, ShaderParsedUsage* info, ShaderBindResource
 				direct_sgprs[usage.start_register]     = false;
 				direct_sgprs[usage.start_register + 1] = false;
 				break;
+
+			case 0x1c: // PtrIndirectResourceTable: s[reg:reg+1] -> guest table of 128-bit descriptors
+			{
+				EXIT_NOT_IMPLEMENTED(usage.flags != 0);
+				EXIT_NOT_IMPLEMENTED(bind->extended.used);
+				EXIT_NOT_IMPLEMENTED(usage.start_register + 1 >= HW::UserSgprInfo::SGPRS_MAX);
+
+				bind->extended.used                    = true;
+				bind->extended.slot                    = usage.slot;
+				bind->extended.start_register          = usage.start_register;
+				bind->extended.data.fields[0]          = user_sgpr.value[usage.start_register];
+				bind->extended.data.fields[1]          = user_sgpr.value[usage.start_register + 1];
+				extended_buffer                        = reinterpret_cast<uint32_t*>(bind->extended.data.Base());
+				info->extended_buffer                  = true;
+				direct_sgprs[usage.start_register]     = false;
+				direct_sgprs[usage.start_register + 1] = false;
+
+				// Unlike 0x1b, no follow-up slots describe the table entries. Register every
+				// entry the code fetches through the pointer; entry at table dword offset d
+				// maps to virtual register 16 + d (same convention as the 0x1b path).
+				{
+					uint32_t offsets_dw[ShaderStorageResources::BUFFERS_MAX];
+					int      offsets_num = ShaderFindIndirectTableOffsets(src, usage.start_register, offsets_dw,
+					                                                      ShaderStorageResources::BUFFERS_MAX);
+					EXIT_NOT_IMPLEMENTED(offsets_num <= 0);
+					for (int oi = 0; oi < offsets_num; oi++)
+					{
+						EXIT_NOT_IMPLEMENTED((offsets_dw[oi] % 4) != 0); // descriptors are 16-byte aligned in the table
+						ShaderGetStorageBuffer(&bind->storage_buffers, direct_sgprs,
+						                       static_cast<int>(16 + offsets_dw[oi]),
+						                       usage.slot + static_cast<int>(offsets_dw[oi] / 4), ShaderStorageUsage::Constant,
+						                       user_sgpr, extended_buffer);
+						info->storage_buffers_constant++;
+					}
+				}
+				break;
+			}
 
 			default: EXIT("unknown usage type: 0x%02" PRIx8 "\n", usage.type);
 		}
