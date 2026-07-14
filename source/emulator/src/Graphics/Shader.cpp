@@ -906,6 +906,55 @@ static bool SpirvRun(const String8& src, Vector<uint32_t>* dst, String8* err_msg
 	return true;
 }
 
+// Shaders compiled without the Sony toolchain (e.g. psbc/ACO output, used by
+// open GNM homebrew) don't carry the 0xBEEB03FF prefix or an in-memory
+// ShaderBinaryInfo. Synthesize a minimal one keyed by the code address: the
+// length comes from the s_endpgm terminator, the identity hash from the code
+// bytes, and there are no input-usage slots (such shaders bind no resources).
+static std::unordered_map<const uint32_t*, ShaderBinaryInfo> g_synth_binary_info;
+static Core::Mutex                                           g_synth_binary_info_mutex;
+
+static const ShaderBinaryInfo* SynthBinaryInfo(const uint32_t* code)
+{
+	constexpr uint32_t S_ENDPGM = 0xBF810000;
+	constexpr uint32_t MAX_DW   = 1u << 20u; // bound the scan
+
+	uint32_t len_dw = 0;
+	for (uint32_t i = 0; i < MAX_DW; i++)
+	{
+		if (code[i] == S_ENDPGM)
+		{
+			len_dw = i + 1;
+			break;
+		}
+	}
+	if (len_dw == 0)
+	{
+		return nullptr;
+	}
+
+	uint64_t hash = 1469598103934665603ULL; // FNV-1a
+	for (uint32_t i = 0; i < len_dw; i++)
+	{
+		hash = (hash ^ code[i]) * 1099511628211ULL;
+	}
+
+	Core::LockGuard lock(g_synth_binary_info_mutex);
+
+	auto& info = g_synth_binary_info[code];
+
+	static const uint8_t kSig[7] = {'O', 'r', 'b', 'S', 'h', 'd', 'r'};
+	memcpy(info.signature, kSig, sizeof(kSig));
+	info.length                     = len_dw * 4;
+	info.chunk_usage_base_offset_dw = 1; // nonzero; no slots are actually read
+	info.num_input_usage_slots      = 0;
+	info.hash0                      = static_cast<uint32_t>(hash >> 32u);
+	info.hash1                      = 0;
+	info.crc32                      = static_cast<uint32_t>(hash);
+
+	return &info;
+}
+
 static const ShaderBinaryInfo* GetBinaryInfo(const uint32_t* code)
 {
 	EXIT_IF(code == nullptr);
@@ -915,7 +964,7 @@ static const ShaderBinaryInfo* GetBinaryInfo(const uint32_t* code)
 		return reinterpret_cast<const ShaderBinaryInfo*>(code + static_cast<size_t>(code[1] + 1) * 2);
 	}
 
-	return nullptr;
+	return SynthBinaryInfo(code);
 }
 
 static ShaderUsageInfo GetUsageSlots(const uint32_t* code)

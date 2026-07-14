@@ -621,15 +621,19 @@ static void rt_check(const HW::RenderTarget& rt)
 			EXIT_NOT_IMPLEMENTED(rt.attrib3.cmask_pipe_aligned != false);
 			EXIT_NOT_IMPLEMENTED(rt.attrib3.dcc_pipe_aligned != false);
 		}
+		// DCC (delta color compression) control-register fields are only
+		// meaningful when a DCC surface is actually bound; rt.dcc_addr.addr is
+		// separately required to be 0 below, so with no DCC surface these
+		// fields don't affect rendering (a title may still set default bits).
 		// EXIT_NOT_IMPLEMENTED(rt.dcc_max_uncompressed_block_size != 0x00000002);
 		// EXIT_NOT_IMPLEMENTED(rt.dcc.max_compressed_block_size != 0x00000000);
-		EXIT_NOT_IMPLEMENTED(rt.dcc.min_compressed_block_size != 0x00000000);
+		// EXIT_NOT_IMPLEMENTED(rt.dcc.min_compressed_block_size != 0x00000000);
 		// EXIT_NOT_IMPLEMENTED(rt.dcc.color_transform != 0x00000000);
-		EXIT_NOT_IMPLEMENTED(rt.dcc.overwrite_combiner_disable != false);
+		// EXIT_NOT_IMPLEMENTED(rt.dcc.overwrite_combiner_disable != false);
 		// EXIT_NOT_IMPLEMENTED(rt.dcc.force_independent_blocks != false);
 		// EXIT_NOT_IMPLEMENTED(rt.dcc.independent_128b_blocks != false);
 		// EXIT_NOT_IMPLEMENTED(rt.dcc.data_write_on_dcc_clear_to_reg != false);
-		EXIT_NOT_IMPLEMENTED(rt.dcc.dcc_clear_key_enable != false);
+		// EXIT_NOT_IMPLEMENTED(rt.dcc.dcc_clear_key_enable != false);
 		EXIT_NOT_IMPLEMENTED(rt.cmask.addr != 0x0000000000000000);
 		EXIT_NOT_IMPLEMENTED(rt.cmask_slice.slice_minus1 != 0x00000000);
 		EXIT_NOT_IMPLEMENTED(rt.fmask.addr != 0x0000000000000000);
