@@ -8176,7 +8176,14 @@ void Spirv::WriteRelooperTerminator(uint32_t index, uint32_t block_leader, int f
 	const auto* func = RecompFunc(inst.type, inst.format);
 	EXIT_NOT_IMPLEMENTED(func == nullptr || func->param[0] == nullptr || func->param[1] == nullptr);
 	int taken = StateOf(ShaderLabel(inst).GetDst());
+	// fall_state is the next block; a conditional as the very last block (no
+	// fall-through block) is malformed GCN — fail loud rather than reference an
+	// unregistered %uint constant / a missing OpSwitch case.
+	EXIT_NOT_IMPLEMENTED(fall_state >= static_cast<int>(m_relooper_leaders.Size()));
 
+	// Resolve state-id constants through GetConstantUint: ids are "uint_<dec>"
+	// only for values < 256 and hex-named ("uint_0x...") at >= 256, so string-
+	// building "uint_%d" would reference an undefined id for big shaders.
 	String8 text = String8(R"(
         <param0>
         <param1>
@@ -8186,8 +8193,8 @@ void Spirv::WriteRelooperTerminator(uint32_t index, uint32_t block_leader, int f
 )")
 	                   .ReplaceStr("<param0>", func->param[0])
 	                   .ReplaceStr("<param1>", func->param[1])
-	                   .ReplaceStr("<taken_c>", String8::FromPrintf("uint_%d", taken))
-	                   .ReplaceStr("<fall_c>", String8::FromPrintf("uint_%d", fall_state))
+	                   .ReplaceStr("<taken_c>", GetConstantUint(static_cast<uint32_t>(taken)))
+	                   .ReplaceStr("<fall_c>", GetConstantUint(static_cast<uint32_t>(fall_state)))
 	                   .ReplaceStr("<index>", String8::FromPrintf("%u", index));
 	m_source += text;
 }
@@ -8261,11 +8268,25 @@ void Spirv::WriteInstructionsRelooper()
 				EXIT("relooper: can't recompile: %s\n", ShaderCode::DbgInstructionToStr(inst).c_str());
 			}
 			m_source += String8::FromPrintf("; %s\n%s\n", ShaderCode::DbgInstructionToStr(inst).c_str(), dst.c_str());
+
+			// A discard block's OpKill (emitted by the Exp recompiler) terminates
+			// the block, so do not append a fall-through after it. This matters
+			// when a branch target splits a discard triple, landing the OpKill and
+			// its s_endpgm in different basic blocks (the s_endpgm block is reached
+			// only via that branch, and correctly breaks to %relooper_merge).
+			if (strstr(dst.c_str(), "OpKill") != nullptr)
+			{
+				terminated = true;
+				break;
+			}
 		}
 
 		// Block ran to the next leader with no terminator: fall through to it.
 		if (!terminated)
 		{
+			// Only reachable when there IS a next block; a non-terminated last
+			// block is malformed GCN (parser guarantees a trailing s_endpgm).
+			EXIT_NOT_IMPLEMENTED(fall_state >= static_cast<int>(m_relooper_leaders.Size()));
 			m_source += String8::FromPrintf("                OpStore %%state %%%s\n                OpBranch %%relooper_cont\n",
 			                                GetConstantUint(static_cast<uint32_t>(fall_state)).c_str());
 		}
