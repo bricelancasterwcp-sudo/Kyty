@@ -1589,6 +1589,7 @@ private:
 	void AnalyzeControlFlow();
 	void ComputeLeaders();
 	void WriteInstructionsRelooper();
+	void WriteRelooperTerminator(uint32_t index, uint32_t block_leader, int fall_state);
 	[[nodiscard]] int StateOf(uint32_t pc) const;
 
 	void ModifyCode();
@@ -8134,9 +8135,151 @@ void Spirv::WriteInstructions()
 	}
 }
 
+// Rewrite one basic-block terminator into state-machine form: store the next
+// %state and continue the dispatch loop (or break to %relooper_merge for a
+// non-discard s_endpgm; discard blocks already terminated via OpKill).
+void Spirv::WriteRelooperTerminator(uint32_t index, uint32_t block_leader, int fall_state)
+{
+	const auto& inst = m_code.GetInstructions().At(index);
+
+	switch (inst.type)
+	{
+		case ShaderInstructionType::SEndpgm:
+		{
+			// A discard block already emitted OpKill via the Exp recompiler
+			// (which terminates the block) — emit nothing more. A normal endpgm
+			// breaks the dispatch loop to the single OpReturn in %relooper_merge.
+			if (!m_code.ReadBlock(block_leader).is_discard)
+			{
+				m_source += "                OpBranch %relooper_merge\n";
+			}
+			return;
+		}
+		case ShaderInstructionType::SBranch:
+		{
+			// Unconditional (forward OR backward): store the target's state and
+			// continue. A backward target re-dispatches to an earlier block, so
+			// loops fall out of the state machine for free.
+			int taken = StateOf(ShaderLabel(inst).GetDst());
+			m_source += String8::FromPrintf(
+			    "                OpStore %%state %%%s\n                OpBranch %%relooper_cont\n",
+			    GetConstantUint(static_cast<uint32_t>(taken)).c_str());
+			return;
+		}
+		default:
+			break; // conditional branch — handled below
+	}
+
+	// Conditional branch: cc_b selects between the taken state and the
+	// fall-through state; OpSelect + OpStore, never OpBranchConditional, so no
+	// nested selection construct is introduced.
+	const auto* func = RecompFunc(inst.type, inst.format);
+	EXIT_NOT_IMPLEMENTED(func == nullptr || func->param[0] == nullptr || func->param[1] == nullptr);
+	int taken = StateOf(ShaderLabel(inst).GetDst());
+
+	String8 text = String8(R"(
+        <param0>
+        <param1>
+       %relooper_next_<index> = OpSelect %uint %cc_b_<index> %<taken_c> %<fall_c>
+                OpStore %state %relooper_next_<index>
+                OpBranch %relooper_cont
+)")
+	                   .ReplaceStr("<param0>", func->param[0])
+	                   .ReplaceStr("<param1>", func->param[1])
+	                   .ReplaceStr("<taken_c>", String8::FromPrintf("uint_%d", taken))
+	                   .ReplaceStr("<fall_c>", String8::FromPrintf("uint_%d", fall_state))
+	                   .ReplaceStr("<index>", String8::FromPrintf("%u", index));
+	m_source += text;
+}
+
+// Lower the whole shader body to a single dispatch loop keyed on %state.
+// Header --OpBranch--> switch block (OpSelectionMerge + OpSwitch %state) --> one
+// case per basic block. Every terminator becomes a state store + continue (or a
+// break to %relooper_merge for s_endpgm, or OpKill for discard). Conditionals
+// collapse to OpSelect, so there are no nested selection constructs and nothing
+// can violate SPIR-V's structured-nesting rules. The emitter is memory-based
+// (no SSA), so no OpPhi is required. See task13-cfg-relooper-design.md.
 void Spirv::WriteInstructionsRelooper()
 {
-	EXIT_NOT_IMPLEMENTED(true); // implemented in Task 2
+	const auto& insts = m_code.GetInstructions();
+	EXIT_NOT_IMPLEMENTED(m_relooper_leaders.IsEmpty());
+
+	// Dispatch prologue: OpLoopMerge (header) -> OpSelectionMerge+OpSwitch (switch
+	// block). OpLoopMerge may only precede OpBranch/OpBranchConditional, so the
+	// switch lives in its own block.
+	String8 cases;
+	for (int s = 0; s < static_cast<int>(m_relooper_leaders.Size()); s++)
+	{
+		cases += String8::FromPrintf(" %d %%relooper_block_%d", s, s);
+	}
+	m_source += String8(R"(
+                OpStore %state %uint_0
+                OpBranch %relooper_header
+       %relooper_header = OpLabel
+                OpLoopMerge %relooper_merge %relooper_cont None
+                OpBranch %relooper_switch
+       %relooper_switch = OpLabel
+       %relooper_cur = OpLoad %uint %state
+                OpSelectionMerge %relooper_sw_merge None
+                OpSwitch %relooper_cur %relooper_sw_merge<cases>
+)")
+	                .ReplaceStr("<cases>", cases);
+
+	// One case block per basic block, in PC order (state id == index).
+	for (int s = 0; s < static_cast<int>(m_relooper_leaders.Size()); s++)
+	{
+		uint32_t leader = m_relooper_leaders.At(s);
+		uint32_t end =
+		    (s + 1 < static_cast<int>(m_relooper_leaders.Size())) ? m_relooper_leaders.At(s + 1) : 0xFFFFFFFFU;
+		int fall_state = s + 1; // next block in PC order (fall-through target)
+
+		m_source += String8::FromPrintf("\n       %%relooper_block_%d = OpLabel\n", s);
+
+		bool terminated = false;
+		for (uint32_t i = 0; i < insts.Size(); i++)
+		{
+			const auto& inst = insts.At(i);
+			if (inst.pc < leader || inst.pc >= end)
+			{
+				continue;
+			}
+
+			if (IsBlockTerminator(inst.type))
+			{
+				WriteRelooperTerminator(i, leader, fall_state);
+				terminated = true;
+				break;
+			}
+
+			// Reuse the existing per-instruction recompiler for the block body.
+			String8     dst;
+			const auto* func = RecompFunc(inst.type, inst.format);
+			bool        ok   = (func != nullptr) && func->func(static_cast<int>(i), m_code, &dst, this, func->param, func->scc_check);
+			if (!ok)
+			{
+				printf("%s\n", m_source.c_str());
+				EXIT("relooper: can't recompile: %s\n", ShaderCode::DbgInstructionToStr(inst).c_str());
+			}
+			m_source += String8::FromPrintf("; %s\n%s\n", ShaderCode::DbgInstructionToStr(inst).c_str(), dst.c_str());
+		}
+
+		// Block ran to the next leader with no terminator: fall through to it.
+		if (!terminated)
+		{
+			m_source += String8::FromPrintf("                OpStore %%state %%%s\n                OpBranch %%relooper_cont\n",
+			                                GetConstantUint(static_cast<uint32_t>(fall_state)).c_str());
+		}
+	}
+
+	// Epilogue: switch merge -> continue -> header; merge -> single OpReturn.
+	m_source += R"(
+       %relooper_sw_merge = OpLabel
+                OpBranch %relooper_cont
+       %relooper_cont = OpLabel
+                OpBranch %relooper_header
+       %relooper_merge = OpLabel
+                OpReturn
+)";
 }
 
 void Spirv::WriteMainEpilog()
