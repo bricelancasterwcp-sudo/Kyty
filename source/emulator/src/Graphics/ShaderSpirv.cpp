@@ -1586,6 +1586,11 @@ private:
 	void FindConstants();
 	void FindVariables();
 
+	void AnalyzeControlFlow();
+	void ComputeLeaders();
+	void WriteInstructionsRelooper();
+	[[nodiscard]] int StateOf(uint32_t pc) const;
+
 	void ModifyCode();
 	void DetectLoops();
 
@@ -1603,6 +1608,15 @@ private:
 
 	Core::Array2<int, 64, 2> m_extended_mapping {};
 	Vector<LoopInfo>         m_loops;
+
+	enum class CfgMode
+	{
+		Linear,
+		NaturalLoop,
+		Relooper
+	};
+	CfgMode          m_cfg_mode = CfgMode::Linear;
+	Vector<uint32_t> m_relooper_leaders;
 };
 
 // NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
@@ -1614,6 +1628,14 @@ struct RecompilerFunc
 	const char*                     param[4]  = {nullptr, nullptr, nullptr, nullptr};
 	SccCheck                        scc_check = SccCheck::None;
 };
+
+static bool IsBlockTerminator(ShaderInstructionType t)
+{
+	return t == ShaderInstructionType::SEndpgm || t == ShaderInstructionType::SBranch ||
+	       t == ShaderInstructionType::SCbranchExecz || t == ShaderInstructionType::SCbranchScc0 ||
+	       t == ShaderInstructionType::SCbranchScc1 || t == ShaderInstructionType::SCbranchVccz ||
+	       t == ShaderInstructionType::SCbranchVccnz;
+}
 
 static bool operand_is_constant(ShaderOperand op)
 {
@@ -6760,6 +6782,7 @@ void Spirv::GenerateSource()
 	WriteDebug();
 	WriteAnnotations();
 	WriteTypes();
+	AnalyzeControlFlow();
 	WriteConstants();
 	WriteGlobalVariables();
 	WriteMainProlog();
@@ -7393,6 +7416,11 @@ void Spirv::WriteLocalVariables()
 
 	m_source += common_vars;
 
+	if (m_cfg_mode == CfgMode::Relooper)
+	{
+		m_source += "           %state = OpVariable %_ptr_Function_uint Function %uint_0\n";
+	}
+
 	if (m_code.GetType() == ShaderType::Vertex)
 	{
 		static const char* text = R"(
@@ -7775,8 +7803,12 @@ void Spirv::DetectLoops()
 
 		// The back-edge must be an unconditional s_branch (loop bottom).
 		auto be_idx = insts.Find(be.GetSrc(), [](const auto& i, auto pc) { return i.pc == pc; });
-		EXIT_NOT_IMPLEMENTED(!insts.IndexValid(be_idx));
-		EXIT_NOT_IMPLEMENTED(insts.At(be_idx).type != ShaderInstructionType::SBranch);
+		if (!insts.IndexValid(be_idx) || insts.At(be_idx).type != ShaderInstructionType::SBranch)
+		{
+			m_cfg_mode = CfgMode::Relooper;
+			m_loops.Clear();
+			return;
+		}
 
 		LoopInfo li;
 		li.header_pc    = be.GetDst();
@@ -7807,16 +7839,89 @@ void Spirv::DetectLoops()
 			// strictly inside this loop body.
 			if (l.GetDst() < l.GetSrc() && l.GetSrc() > li.header_pc && l.GetSrc() < li.back_edge_pc)
 			{
-				EXIT_NOT_IMPLEMENTED(true);
+				m_cfg_mode = CfgMode::Relooper;
+				m_loops.Clear();
+				return;
 			}
 		}
-		EXIT_NOT_IMPLEMENTED(header_targets != 1);
-		EXIT_NOT_IMPLEMENTED(merge_targets != 1);
+		if (header_targets != 1 || merge_targets != 1)
+		{
+			m_cfg_mode = CfgMode::Relooper;
+			m_loops.Clear();
+			return;
+		}
 
 		li.continue_label = String8::FromPrintf("loop_cont_%04" PRIx32, li.header_pc);
 		li.body_label     = String8::FromPrintf("loop_body_%04" PRIx32, li.header_pc);
 
 		m_loops.Add(li);
+	}
+
+	if (m_cfg_mode != CfgMode::Relooper)
+	{
+		m_cfg_mode = (m_loops.IsEmpty() ? CfgMode::Linear : CfgMode::NaturalLoop);
+	}
+}
+
+// Leaders of the true basic-block partition: PC 0, every non-disabled branch
+// target, and the PC of the instruction following every terminator (a
+// conditional branch's fall-through, or the dead PC after an unconditional
+// branch / s_endpgm). Instructions are in ascending PC order, so the leader
+// list is ascending and duplicate-free (each instruction contributes at most
+// one leader). Block state id == index into m_relooper_leaders.
+void Spirv::ComputeLeaders()
+{
+	m_relooper_leaders.Clear();
+	const auto& insts           = m_code.GetInstructions();
+	const auto& labels          = m_code.GetLabels();
+	bool        prev_terminator = true; // the first instruction is always a leader
+	for (uint32_t i = 0; i < insts.Size(); i++)
+	{
+		uint32_t pc           = insts.At(i).pc;
+		bool     is_label_dst = false;
+		for (const auto& l: labels)
+		{
+			if (!l.IsDisabled() && l.GetDst() == pc)
+			{
+				is_label_dst = true;
+				break;
+			}
+		}
+		if (prev_terminator || is_label_dst)
+		{
+			m_relooper_leaders.Add(pc);
+		}
+		prev_terminator = IsBlockTerminator(insts.At(i).type);
+	}
+}
+
+int Spirv::StateOf(uint32_t pc) const
+{
+	for (int s = 0; s < static_cast<int>(m_relooper_leaders.Size()); s++)
+	{
+		if (m_relooper_leaders.At(s) == pc)
+		{
+			return s;
+		}
+	}
+	EXIT("relooper: no basic block starts at pc 0x%08" PRIx32, pc);
+	return -1;
+}
+
+// Classify the shader's control flow and prepare relooper state. Runs before
+// WriteConstants so any state-id constants it needs are registered in time.
+void Spirv::AnalyzeControlFlow()
+{
+	m_cfg_mode = CfgMode::Linear;
+	ComputeLeaders();
+	DetectLoops(); // sets m_cfg_mode to NaturalLoop/Relooper; populates m_loops for NaturalLoop
+
+	// Debug lever + validation ladder: force any shader with a body through the
+	// relooper, to prove it renders identically on known-good CFGs.
+	if (getenv("KYTY_FORCE_RELOOPER") != nullptr && !m_code.GetInstructions().IsEmpty())
+	{
+		m_cfg_mode = CfgMode::Relooper;
+		m_loops.Clear();
 	}
 }
 
@@ -7981,8 +8086,13 @@ void Spirv::DetectFetch()
 
 void Spirv::WriteInstructions()
 {
+	if (m_cfg_mode == CfgMode::Relooper)
+	{
+		WriteInstructionsRelooper();
+		return;
+	}
+
 	ModifyCode();
-	DetectLoops();
 
 	int         index        = -1;
 	const auto& instructions = m_code.GetInstructions();
@@ -8022,6 +8132,11 @@ void Spirv::WriteInstructions()
 			m_source += String8::FromPrintf("%s\n", dst_debug.c_str());
 		}
 	}
+}
+
+void Spirv::WriteInstructionsRelooper()
+{
+	EXIT_NOT_IMPLEMENTED(true); // implemented in Task 2
 }
 
 void Spirv::WriteMainEpilog()
@@ -8135,6 +8250,13 @@ void Spirv::FindConstants()
 	{
 		AddConstantInt(i);
 		AddConstantUint(i);
+	}
+	if (m_cfg_mode == CfgMode::Relooper)
+	{
+		for (int s = 0; s < static_cast<int>(m_relooper_leaders.Size()); s++)
+		{
+			AddConstantUint(static_cast<uint32_t>(s));
+		}
 	}
 	for (const auto& inst: m_code.GetInstructions())
 	{
