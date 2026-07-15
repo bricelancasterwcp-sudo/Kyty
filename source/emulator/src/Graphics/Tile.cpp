@@ -271,6 +271,137 @@ public:
 	}
 };
 
+// 2D-thin (tile mode 14, THIN_2D_THIN) texture tiler. Math verified
+// byte-for-byte against freegnm's production GpuAddress tiler (base+neo)
+// and AMD addrlib; see kyty-assets/cbtest/notes/2dthin-detile-swizzle-and-oracle.md.
+// NOTE: neo textures use pipe config P16_32x32_8x16 — NOT Tiler32's scanout
+// neo config. v1: 32bpp RGBA8, levels==1 only (fails loud otherwise).
+class Tiler2dThin
+{
+public:
+	uint32_t m_width             = 0;
+	uint32_t m_height            = 0;
+	uint32_t m_pitch             = 0;
+	uint32_t m_padded_pitch      = 0;
+	uint32_t m_bytes_per_element = 0;
+	uint32_t m_num_pipes         = 0;
+	uint32_t m_num_banks         = 0;
+	uint32_t m_bank_width        = 0;
+	uint32_t m_bank_height       = 0;
+	uint32_t m_macro_aspect      = 0;
+	uint32_t m_macro_width       = 0;
+	uint32_t m_macro_height      = 0;
+	uint32_t m_pipe_bits         = 0;
+	uint32_t m_bank_bits         = 0;
+	bool     m_neo               = false;
+
+	void Init(uint32_t dfmt, uint32_t nfmt, uint32_t width, uint32_t height, uint32_t pitch, uint32_t levels, bool neo)
+	{
+		if (!((nfmt == 9 && dfmt == 10) || (nfmt == 0 && dfmt == 10)) || levels != 1)
+		{
+			EXIT("Tiler2dThin: unsupported: nfmt = %u, dfmt = %u, width = %u, height = %u, pitch = %u, levels = %u, neo = %s\n", nfmt,
+			     dfmt, width, height, pitch, levels, neo ? "true" : "false");
+		}
+
+		m_width             = width;
+		m_height            = height;
+		m_pitch             = pitch;
+		m_bytes_per_element = 4;
+		m_neo               = neo;
+		// 32bpp 2D-thin macro-tile config: base P8_32x32_16x16/16-bank,
+		// neo P16_32x32_8x16/8-bank (bank_height 2, aspect 1).
+		m_num_pipes    = neo ? 16 : 8;
+		m_num_banks    = neo ? 8 : 16;
+		m_bank_width   = 1;
+		m_bank_height  = neo ? 2 : 1;
+		m_macro_aspect = neo ? 1 : 2;
+		m_macro_width  = 8 * m_bank_width * m_num_pipes * m_macro_aspect;
+		m_macro_height = 8 * m_bank_height * m_num_banks / m_macro_aspect;
+		m_pipe_bits    = neo ? 4 : 3;
+		m_bank_bits    = neo ? 3 : 4;
+		// The tile-14 table's padded[] entries are {0,0} — padding is computed
+		// here, NOT taken from TileGetTextureSize.
+		m_padded_pitch = ((pitch + m_macro_width - 1) / m_macro_width) * m_macro_width;
+	}
+
+	// THIN micro-tile element order (same interleave as Tiler1d)
+	static uint32_t GetElementIndex(uint32_t x, uint32_t y)
+	{
+		uint32_t elem = 0;
+		elem |= ((x >> 0u) & 0x1u) << 0u;
+		elem |= ((y >> 0u) & 0x1u) << 1u;
+		elem |= ((x >> 1u) & 0x1u) << 2u;
+		elem |= ((y >> 1u) & 0x1u) << 3u;
+		elem |= ((x >> 2u) & 0x1u) << 4u;
+		elem |= ((y >> 2u) & 0x1u) << 5u;
+		return elem;
+	}
+
+	[[nodiscard]] uint32_t GetPipeIndex(uint32_t x, uint32_t y) const
+	{
+		uint32_t pipe = 0;
+		if (!m_neo)
+		{
+			// P8_32x32_16x16
+			pipe |= (((x >> 3u) ^ (y >> 3u) ^ (x >> 4u)) & 0x1u) << 0u;
+			pipe |= (((x >> 4u) ^ (y >> 4u)) & 0x1u) << 1u;
+			pipe |= (((x >> 5u) ^ (y >> 5u)) & 0x1u) << 2u;
+		} else
+		{
+			// P16_32x32_8x16 (texture config)
+			pipe |= (((x >> 4u) ^ (y >> 3u)) & 0x1u) << 0u;
+			pipe |= (((x >> 3u) ^ (y >> 4u)) & 0x1u) << 1u;
+			pipe |= (((x >> 5u) ^ (y >> 6u)) & 0x1u) << 2u;
+			pipe |= (((x >> 6u) ^ (y >> 5u)) & 0x1u) << 3u;
+		}
+		return pipe;
+	}
+
+	[[nodiscard]] uint32_t GetBankIndex(uint32_t x, uint32_t y) const
+	{
+		const uint32_t xs   = (x / 8) / (m_bank_width * m_num_pipes);
+		const uint32_t ys   = (y / 8) / m_bank_height;
+		uint32_t       bank = 0;
+		switch (m_num_banks)
+		{
+			case 8:
+				bank |= (((xs >> 0u) ^ (ys >> 2u)) & 0x1u) << 0u;
+				bank |= (((xs >> 1u) ^ (ys >> 1u) ^ (ys >> 2u)) & 0x1u) << 1u;
+				bank |= (((xs >> 2u) ^ (ys >> 0u)) & 0x1u) << 2u;
+				break;
+			case 16:
+				bank |= (((xs >> 0u) ^ (ys >> 3u)) & 0x1u) << 0u;
+				bank |= (((xs >> 1u) ^ (ys >> 2u) ^ (ys >> 3u)) & 0x1u) << 1u;
+				bank |= (((xs >> 2u) ^ (ys >> 1u)) & 0x1u) << 2u;
+				bank |= (((xs >> 3u) ^ (ys >> 0u)) & 0x1u) << 3u;
+				break;
+			default:;
+		}
+		return bank;
+	}
+
+	[[nodiscard]] uint64_t GetTiledOffset(uint32_t x, uint32_t y) const
+	{
+		uint64_t element_offset    = static_cast<uint64_t>(GetElementIndex(x, y)) * m_bytes_per_element;
+		uint64_t micro_tile_bytes  = 64 * m_bytes_per_element;
+		uint64_t tile_row_index    = (y / 8) % m_bank_height;
+		uint64_t tile_column_index = ((x / 8) / m_num_pipes) % m_bank_width;
+		uint64_t tile_offset       = (tile_row_index * m_bank_width + tile_column_index) * micro_tile_bytes;
+
+		uint64_t macro_tile_bytes    = micro_tile_bytes * (m_macro_width / 8) * (m_macro_height / 8) / (m_num_pipes * m_num_banks);
+		uint64_t macro_tiles_per_row = m_padded_pitch / m_macro_width;
+		uint64_t macro_tile_offset   = (static_cast<uint64_t>(y / m_macro_height) * macro_tiles_per_row + (x / m_macro_width)) * macro_tile_bytes;
+
+		uint64_t total_offset = macro_tile_offset + tile_offset + element_offset;
+
+		uint64_t pipe = GetPipeIndex(x, y);
+		uint64_t bank = GetBankIndex(x, y);
+
+		return (total_offset & 0xFFu) | (pipe << 8u) | (bank << (8u + m_pipe_bits)) |
+		       ((total_offset >> 8u) << (8u + m_pipe_bits + m_bank_bits));
+	}
+};
+
 static Tiler* g_tiler = nullptr;
 
 static void init_maps();
@@ -449,6 +580,22 @@ static void Detile1d(const Tiler1d* t, uint8_t* dst, const uint8_t* src, bool ne
 	}
 }
 
+static void Detile2dThin(const Tiler2dThin* t, uint8_t* dst, const uint8_t* src)
+{
+	for (uint32_t y = 0; y < t->m_height; y++)
+	{
+		uint64_t linear_offset = static_cast<uint64_t>(y) * t->m_pitch * 4;
+
+		for (uint32_t x = 0; x < t->m_width; x++)
+		{
+			auto tiled_offset = t->GetTiledOffset(x, y);
+
+			*reinterpret_cast<uint32_t*>(dst + linear_offset) = *reinterpret_cast<const uint32_t*>(src + tiled_offset);
+			linear_offset += 4;
+		}
+	}
+}
+
 void TileConvertTiledToLinear(void* dst, const void* src, TileMode mode, uint32_t width, uint32_t height, bool neo)
 {
 	KYTY_PROFILER_FUNCTION();
@@ -462,21 +609,31 @@ void TileConvertTiledToLinear(void* dst, const void* src, TileMode mode, uint32_
 }
 
 void TileConvertTiledToLinear(void* dst, const void* src, TileMode mode, uint32_t dfmt, uint32_t nfmt, uint32_t width, uint32_t height,
-                              uint32_t pitch, uint32_t levels, bool neo)
+                              uint32_t pitch, uint32_t levels, uint32_t tile, bool neo)
 {
 	EXIT_NOT_IMPLEMENTED(mode != TileMode::TextureTiled);
+	EXIT_NOT_IMPLEMENTED(tile != 13 && tile != 14);
 
 	TilePaddedSize padded_sizes[16];
 	TileSizeOffset level_sizes[16];
 
-	TileGetTextureSize(dfmt, nfmt, width, height, pitch, levels, 13, neo, nullptr, level_sizes, padded_sizes);
+	TileGetTextureSize(dfmt, nfmt, width, height, pitch, levels, tile, neo, nullptr, level_sizes, padded_sizes);
+
+	auto*       dstptr = static_cast<uint8_t*>(dst);
+	const auto* srcptr = static_cast<const uint8_t*>(src);
+
+	if (tile == 14)
+	{
+		// 2D-thin: v1 is single-level (Tiler2dThin::Init enforces the rest)
+		Tiler2dThin t;
+		t.Init(dfmt, nfmt, width, height, pitch, levels, neo);
+		Detile2dThin(&t, dstptr + level_sizes[0].offset, srcptr + level_sizes[0].offset);
+		return;
+	}
 
 	uint32_t mip_width  = width;
 	uint32_t mip_height = height;
 	uint32_t mip_pitch  = pitch;
-
-	auto*       dstptr = static_cast<uint8_t*>(dst);
-	const auto* srcptr = static_cast<const uint8_t*>(src);
 
 	for (uint32_t l = 0; l < levels; l++)
 	{

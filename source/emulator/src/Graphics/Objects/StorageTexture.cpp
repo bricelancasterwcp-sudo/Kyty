@@ -203,7 +203,7 @@ static void update_func(GraphicContext* ctx, const uint64_t* params, void* obj, 
 		EXIT_NOT_IMPLEMENTED(fmt != 0);
 		auto* temp_buf = new uint8_t[*size];
 		TileConvertTiledToLinear(temp_buf, reinterpret_cast<void*>(*vaddr), TileMode::TextureTiled, dfmt, nfmt, width, height, pitch,
-		                         levels, neo);
+		                         levels, static_cast<uint32_t>(tile), neo);
 		UtilFillImage(ctx, vk_obj, temp_buf, *size, regions, static_cast<uint64_t>(vk_layout));
 		delete[] temp_buf;
 	} else if (tile == 8)
