@@ -53,6 +53,10 @@ static VkFormat get_texture_format(uint32_t dfmt, uint32_t nfmt, uint32_t fmt)
 		{
 			return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
 		}
+		if (nfmt == 7 && dfmt == 14)
+		{
+			return VK_FORMAT_R32G32B32A32_SFLOAT;
+		}
 		EXIT("unknown format: nfmt = %u, dfmt = %u\n", nfmt, dfmt);
 	} else
 	{
@@ -182,7 +186,7 @@ static void update_func(GraphicContext* ctx, const uint64_t* params, void* obj, 
 		TileGetTextureSize2(fmt, width, height, pitch, levels, tile, nullptr, level_sizes, nullptr);
 	} else
 	{
-		EXIT_NOT_IMPLEMENTED(tile != 8 && tile != 13);
+		EXIT_NOT_IMPLEMENTED(tile != 8 && tile != 13 && tile != 31);
 
 		TileGetTextureSize(dfmt, nfmt, width, height, pitch, levels, tile, neo, nullptr, level_sizes, nullptr);
 	}
@@ -231,8 +235,10 @@ static void update_func(GraphicContext* ctx, const uint64_t* params, void* obj, 
 			                         levels, neo);
 			UtilFillImage(ctx, vk_obj, temp_buf, *size, regions, static_cast<uint64_t>(vk_layout));
 			delete[] temp_buf;
-		} else if (tile == 8)
+		} else if (tile == 8 || tile == 31)
 		{
+			// LINEAR_GENERAL (31) is row-major with no swizzle, like LINEAR_ALIGNED (8);
+			// upload straight (UtilFillImage honours the per-mip pitch).
 			UtilFillImage(ctx, vk_obj, reinterpret_cast<void*>(*vaddr), *size, regions, static_cast<uint64_t>(vk_layout));
 		}
 	} else

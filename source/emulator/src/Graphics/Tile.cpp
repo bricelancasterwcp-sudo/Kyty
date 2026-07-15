@@ -1116,6 +1116,9 @@ void TileGetTextureSize(uint32_t dfmt, uint32_t nfmt, uint32_t width, uint32_t h
 		} else if ((dfmt == 1 && nfmt == 0))
 		{
 			size = pitch * height;
+		} else if ((dfmt == 14 && nfmt == 7))
+		{
+			size = pitch * height * 16; // R32G32B32A32
 		}
 
 		if (total_size != nullptr)
