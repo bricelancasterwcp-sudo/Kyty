@@ -4671,8 +4671,11 @@ KYTY_RECOMPILER_FUNC(Recompile_SSwappcB64_Sdst2Ssrc02)
 		EXIT_NOT_IMPLEMENTED(input_info->fetch_shader_reg != 0);
 	}
 
+	// The fetch call sits in the VS prologue: index 1 after an s_getpc_b64, or index 0
+	// when psbc leaves the fetch-shader pointer directly in the s0-s1 user data. The
+	// emitted fetch only loads vertex attributes for later use, so either position works.
 	if (input_info != nullptr && input_info->fetch_external && inst.dst.type == ShaderOperandType::Sgpr && inst.dst.register_id == 0 &&
-	    inst.src[0].type == ShaderOperandType::Sgpr && inst.src[0].register_id == 0 && index == 1)
+	    inst.src[0].type == ShaderOperandType::Sgpr && inst.src[0].register_id == 0 && index <= 1)
 	{
 		for (int i = 0; i < input_info->resources_num; i++)
 		{

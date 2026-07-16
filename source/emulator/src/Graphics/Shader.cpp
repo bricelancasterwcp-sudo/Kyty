@@ -1838,13 +1838,31 @@ void ShaderParseUsage(uint64_t addr, ShaderParsedUsage* info, ShaderBindResource
 	}
 
 	// psbc / OrbShdr binaries carry no input-usage slots (num_input_usage_slots == 0), yet
-	// still load resources from an internal resource table addressed by the first user SGPR
-	// pair (s0-s1 by psbc convention). If the usage table bound no extended table but the code
-	// dereferences such a pointer, discover and bind its descriptors exactly as the 0x1c path
-	// does (base recovered from the code; entries classified by their downstream consumer).
+	// still load resources from an internal resource table addressed by a user SGPR pair. If
+	// the usage table bound no extended table but the code dereferences such a pointer,
+	// discover and bind its descriptors exactly as the 0x1c path does (entries classified by
+	// their downstream consumer). The table pointer lives in the first SMRD descriptor load's
+	// SBASE: s0 for simple shaders, higher (e.g. s6) when the low registers are consumed by an
+	// external fetch shader (s0-s1 fetch ptr, s2-s3 vertex-buffer table).
 	if (!bind->extended.used && user_sgpr_num >= 2)
 	{
-		int base_register = ShaderFindIndirectTableBase(src, 0, /*allow_missing=*/true);
+		int base_register = -1;
+		for (uint32_t i = 0; i < 0x2000; i++)
+		{
+			if (src[i] == 0xBF810000u) // s_endpgm
+			{
+				break;
+			}
+			if ((src[i] & 0xF8000000u) == 0xC0000000u) // SMRD
+			{
+				uint32_t op = (src[i] >> 22u) & 0x1Fu;
+				if (op == 0x02 || op == 0x03) // s_load_dwordx4 / dwordx8: a descriptor fetch
+				{
+					base_register = static_cast<int>(((src[i] >> 9u) & 0x3Fu) * 2);
+					break;
+				}
+			}
+		}
 		if (base_register >= 0 && base_register + 1 < HW::UserSgprInfo::SGPRS_MAX)
 		{
 			ShaderIndirectEntry entries[16];
@@ -2076,6 +2094,36 @@ void ShaderGetInputInfoVS(const HW::VertexShaderInfo* regs, const HW::ShaderRegi
 		info->gs_prolog = false;
 
 		ShaderParseUsage(shader_addr, &usage, &info->bind, user_sgpr, user_sgpr_num);
+
+		// psbc/OrbShdr vertex shaders can call an external fetch shader (via s_swappc_b64)
+		// with no input-usage slot declaring it (types 0x12/0x17). If the usage table
+		// reported no fetch/vertex_buffer/vertex_attrib but the code calls a fetch shader,
+		// discover it: the fetch-shader pointer is the s_swappc source SGPR pair, and the
+		// fetch ABI keeps the vertex-buffer-descriptor table in s2 (ShaderParseFetch's SBASE).
+		if (!usage.fetch && !usage.vertex_buffer && !usage.vertex_attrib)
+		{
+			const auto* vcode = reinterpret_cast<const uint32_t*>(shader_addr);
+			for (uint32_t i = 0; i < 0x2000; i++)
+			{
+				if (vcode[i] == 0xBF810000u) // s_endpgm
+				{
+					break;
+				}
+				// SOP1 (bits [31:23] == 0b101111101), opcode 0x21 == s_swappc_b64.
+				if ((vcode[i] & 0xFF800000u) == 0xBE800000u && ((vcode[i] >> 8u) & 0xFFu) == 0x21u)
+				{
+					int ssrc0 = static_cast<int>(vcode[i] & 0xFFu);
+					if (ssrc0 >= 0 && ssrc0 + 1 < HW::UserSgprInfo::SGPRS_MAX)
+					{
+						usage.fetch             = true;
+						usage.fetch_reg         = ssrc0;
+						usage.vertex_buffer     = true;
+						usage.vertex_buffer_reg = 2;
+					}
+					break;
+				}
+			}
+		}
 	}
 
 	// A VS may carry an extended (0x1c) indirect table of *constant* buffers
