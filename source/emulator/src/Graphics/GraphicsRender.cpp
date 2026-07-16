@@ -4717,10 +4717,20 @@ void GraphicsRenderDrawIndex(uint64_t submit_id, CommandBuffer* buffer, HW::Cont
 
 	switch (ucfg->GetPrimType())
 	{
+		case 1: topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST; break;     // kPrimitiveTypePointList
+		case 2: topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST; break;      // kPrimitiveTypeLineList
+		case 3: topology = VK_PRIMITIVE_TOPOLOGY_LINE_STRIP; break;     // kPrimitiveTypeLineStrip
 		case 4: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; break;  // kPrimitiveTypeTriList
 		case 5: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN; break;   // kPrimitiveTypeTriFan
 		case 6: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; break; // kPrimitiveTypeTriStrip
+		// RectList: each rect is 3 explicit vertices, the 4th corner is inferred by the
+		// hardware. Vulkan can't infer it, so the defining triangle is rendered per rect.
+		case 17: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; break; // kPrimitiveTypeRectList
 		case 19: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN; break;  // kPrimitiveTypeQuadList
+		// QuadStrip: a triangle strip over the same vertex sequence covers each quad.
+		case 20: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; break; // kPrimitiveTypeQuadStrip
+		// Polygon: a convex polygon renders exactly as a triangle fan.
+		case 21: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN; break; // kPrimitiveTypePolygon
 		default: EXIT("unknown primitive type: %u\n", ucfg->GetPrimType());
 	}
 
@@ -4813,9 +4823,17 @@ void GraphicsRenderDrawIndex(uint64_t submit_id, CommandBuffer* buffer, HW::Cont
 
 	switch (ucfg->GetPrimType())
 	{
+		case 1:
+		case 2:
+		case 3:
 		case 4:
 		case 5:
-		case 6: vkCmdDrawIndexed(vk_buffer, index_count, num_instances, 0, 0, 0); break;
+		case 6:
+		case 17: // rect list: defining triangles only (4th corners are hardware-inferred)
+		case 20: // quad strip: rendered as the covering triangle strip
+		case 21: // polygon: rendered as a triangle fan
+			vkCmdDrawIndexed(vk_buffer, index_count, num_instances, 0, 0, 0);
+			break;
 		case 19:
 			EXIT_NOT_IMPLEMENTED((index_count & 0x3u) != 0);
 			for (uint32_t i = 0; i < index_count; i += 4)
@@ -4882,9 +4900,18 @@ void GraphicsRenderDrawIndexAuto(uint64_t submit_id, CommandBuffer* buffer, HW::
 
 	switch (ucfg->GetPrimType())
 	{
+		case 1: topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST; break;      // kPrimitiveTypePointList
+		case 2: topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST; break;       // kPrimitiveTypeLineList
+		case 3: topology = VK_PRIMITIVE_TOPOLOGY_LINE_STRIP; break;      // kPrimitiveTypeLineStrip
 		case 4: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; break;   // kPrimitiveTypeTriList
+		case 5: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN; break;    // kPrimitiveTypeTriFan
+		case 6: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; break;  // kPrimitiveTypeTriStrip
 		case 17: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; break; // kPrimitiveTypeRectList
 		case 19: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN; break;   // kPrimitiveTypeQuadList
+		// QuadStrip: a triangle strip over the same vertex sequence covers each quad.
+		case 20: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; break; // kPrimitiveTypeQuadStrip
+		// Polygon: a convex polygon renders exactly as a triangle fan.
+		case 21: topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN; break; // kPrimitiveTypePolygon
 		default: EXIT("unknown primitive type: %u\n", ucfg->GetPrimType());
 	}
 
@@ -4931,7 +4958,16 @@ void GraphicsRenderDrawIndexAuto(uint64_t submit_id, CommandBuffer* buffer, HW::
 
 	switch (ucfg->GetPrimType())
 	{
-		case 4: vkCmdDraw(vk_buffer, index_count, num_instances, 0, 0); break;
+		case 1:
+		case 2:
+		case 3:
+		case 4:
+		case 5:
+		case 6:
+		case 20: // quad strip: rendered as the covering triangle strip
+		case 21: // polygon: rendered as a triangle fan
+			vkCmdDraw(vk_buffer, index_count, num_instances, 0, 0);
+			break;
 		case 17:
 			EXIT_NOT_IMPLEMENTED(!(index_count == 3 && vs_input_info.buffers_num == 0));
 			vkCmdDraw(vk_buffer, 4, num_instances, 0, 0);

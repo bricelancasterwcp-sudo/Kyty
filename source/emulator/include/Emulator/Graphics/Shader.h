@@ -835,7 +835,9 @@ struct ShaderGdsResources
 
 struct ShaderDirectSgprsResources
 {
-	static constexpr int SGPRS_MAX = 4;
+	// Direct SGPRs are raw user-data registers, so the architectural bound is the
+	// 16-entry user-SGPR file (HW::UserSgprInfo::SGPRS_MAX).
+	static constexpr int SGPRS_MAX = 16;
 
 	ShaderDirectSgprResource sgprs[SGPRS_MAX];
 	int                      start_register[SGPRS_MAX] = {0};
