@@ -961,6 +961,7 @@ struct TextureInfo2
 #include "Tables/TileTextureInfo_13_37_0.inc"
 #include "Tables/TileTextureInfo_13_37_9.inc"
 #include "Tables/TileTextureInfo_14_10_0.inc"
+#include "Tables/TileTextureInfo_14_10_9.inc"
 #include "Tables/TileTextureInfo_2_4_7.inc"
 #include "Tables/TileTextureInfo_8_10_0.inc"
 #include "Tables/TileTextureInfo_8_10_9.inc"
@@ -974,6 +975,7 @@ static const TextureInfo* g_info_map_13_36_0[16][16][16][2] = {};
 static const TextureInfo* g_info_map_13_37_0[16][16][16][2] = {};
 static const TextureInfo* g_info_map_13_37_9[16][16][16][2] = {};
 static const TextureInfo* g_info_map_14_10_0[16][16][16][2] = {};
+static const TextureInfo* g_info_map_14_10_9[16][16][16][2] = {};
 static const TextureInfo* g_info_map_2_4_7[16][16][16][2]   = {};
 static const TextureInfo* g_info_map_8_1_0[16][16][16][2]   = {};
 static const TextureInfo* g_info_map_8_10_0[16][16][16][2]  = {};
@@ -1078,6 +1080,7 @@ static void init_maps()
 	init_map(g_info_map_13_37_0, infos_13_37_0_pow2, std::size(infos_13_37_0_pow2));
 	init_map(g_info_map_13_37_9, infos_13_37_9_pow2, std::size(infos_13_37_9_pow2));
 	init_map(g_info_map_14_10_0, infos_14_10_0_pow2, std::size(infos_14_10_0_pow2));
+	init_map(g_info_map_14_10_9, infos_14_10_9_pow2, std::size(infos_14_10_9_pow2));
 	init_map(g_info_map_2_4_7, infos_2_4_7_pow2, std::size(infos_2_4_7_pow2));
 	init_map(g_info_map_8_1_0, infos_8_1_0_pow2, std::size(infos_8_1_0_pow2));
 	init_map(g_info_map_8_10_0, infos_8_10_0_pow2, std::size(infos_8_10_0_pow2));
@@ -1168,6 +1171,9 @@ static void FindTextureInfo(uint32_t dfmt, uint32_t nfmt, uint32_t width, uint32
 			if (dfmt == 10 && nfmt == 0)
 			{
 				KYTY_TEXTURE_CHECK(14_10_0);
+			} else if (dfmt == 10 && nfmt == 9)
+			{
+				KYTY_TEXTURE_CHECK(14_10_9);
 			}
 			break;
 		case 10:
