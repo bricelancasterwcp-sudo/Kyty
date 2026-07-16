@@ -2151,7 +2151,11 @@ void ShaderGetInputInfoPS(const HW::PixelShaderInfo* regs, const HW::ShaderRegis
 	EXIT_NOT_IMPLEMENTED(usage.fetch || usage.vertex_buffer || usage.vertex_attrib);
 	EXIT_NOT_IMPLEMENTED(usage.storage_buffers_readwrite > 0);
 	EXIT_NOT_IMPLEMENTED(usage.gds_pointers > 0);
-	EXIT_NOT_IMPLEMENTED(usage.direct_sgprs > 0);
+	// Direct SGPRs (inline user data) are handled stage-agnostically: ShaderParseUsage
+	// above already filled ps_info->bind.direct_sgprs, and SPIR-V generation, draw-time
+	// push-constant seeding and the shader id all consume bind.direct_sgprs the same way
+	// they do for vertex shaders (which carry no such guard). psbc-compiled pixel shaders
+	// use them.
 
 	ShaderCalcBindingIndices(&ps_info->bind);
 }
