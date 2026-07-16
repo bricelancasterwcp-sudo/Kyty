@@ -9,25 +9,27 @@ An open, from-scratch effort to run PlayStation software on Linux — the PS4 **
 
 > **Honest scope:** everything below is verified on **open homebrew** built with the free [OpenOrbis](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain)/[freegnm](https://gitgud.io/gluesniffer/freegnm-examples) toolchains. It does **not** run commercial or PS5 games — that is the long-term goal, not a current claim.
 
-<p align="center">
-  <img src="docs/media/2048-gameplay.png" width="460" alt="A homebrew 2048 game running and playable in Kyty on Linux"><br>
-  <em>A homebrew game — <b>2048</b> by SKIDGFX — booting <b>and playable</b> in the fork, driven from the keyboard. Tiles slide and merge; the score updates.</em>
-</p>
+<table align="center"><tr>
+<td align="center" width="50%">
+<img src="docs/media/2048-gameplay.png" width="440" alt="Homebrew 2048 running and playable in Kyty on Linux"><br>
+<b>Homebrew 2048 — playable</b><br>
+<sub>Booted from a fake-signed package and driven by keyboard; tiles slide &amp; merge, the score updates. (2048 by SKIDGFX.)</sub>
+</td>
+<td align="center" width="50%">
+<img src="docs/media/doom-gameplay.png" width="440" alt="FreeDoom running in Kyty on Linux"><br>
+<b>FreeDoom — a full Doom engine, running</b><br>
+<sub>id Tech 1 rendering + HUD (its built-in demo playing), ported with the OpenOrbis toolchain.</sub>
+</td>
+</tr></table>
 
-<table align="center">
-<tr>
-<td align="center"><img src="docs/media/cube-textured.png" width="230" alt="Textured depth-tested cube"><br><sub>Textured, depth-tested 3D cube</sub></td>
-<td align="center"><img src="docs/media/pbr-dragon.png" width="230" alt="PBR dragon"><br><sub>PBR model, point-lit (300k-index draw)</sub></td>
-<td align="center"><img src="docs/media/instances-pbr.png" width="230" alt="Instanced PBR draw"><br><sub>Instancing — one draw call, N copies</sub></td>
-</tr>
-<tr>
-<td align="center"><img src="docs/media/gouraud-triangle.png" width="230" alt="Gouraud triangle"><br><sub>Gouraud-shaded triangle</sub></td>
-<td align="center"><img src="docs/media/2dthin-texture.png" width="230" alt="2D-thin texture"><br><sub>2D-thin (retail-format) texture detiling</sub></td>
-<td align="center"><img src="docs/media/2048-menu.png" width="230" alt="2048 menu"><br><sub>Homebrew 2048 — menu</sub></td>
-</tr>
-</table>
+<table align="center"><tr>
+<td align="center"><img src="docs/media/cube-textured.png" width="228" alt="Textured depth-tested cube"><br><sub>Textured, depth-tested cube</sub></td>
+<td align="center"><img src="docs/media/pbr-dragon.png" width="228" alt="PBR dragon"><br><sub>PBR model, point-lit</sub></td>
+<td align="center"><img src="docs/media/gouraud-triangle.png" width="228" alt="Gouraud triangle"><br><sub>Gouraud-shaded triangle</sub></td>
+<td align="center"><img src="docs/media/2dthin-texture.png" width="228" alt="2D-thin texture"><br><sub>2D-thin (retail-format) texture</sub></td>
+</tr></table>
 
-<p align="center"><sub>Captured from this fork's own GNM→Vulkan output on Linux (frame-dumped at 480×270). It started with a single hand-encoded GCN triangle and grew into the pipeline above.</sub></p>
+<p align="center"><sub>All captured from this fork's own GNM→Vulkan output on Linux (960×540). It started with a single hand-encoded GCN triangle and grew into the pipeline above — the GCN→SPIR-V shader recompiler and command processor are implemented from scratch.</sub></p>
 
 ### 💜 Support this project
 
