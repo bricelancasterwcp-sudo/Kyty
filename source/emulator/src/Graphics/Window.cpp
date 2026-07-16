@@ -2452,7 +2452,13 @@ void WindowDrawBuffer(VideoOutVulkanImage* image)
 	if (getenv("KYTY_DUMP_FRAME") != nullptr)
 	{
 		static int s_dump_n = 0;
-		if (s_dump_n++ == 120)
+		static int s_dump_at = -1;
+		if (s_dump_at < 0)
+		{
+			const char* s = getenv("KYTY_DUMP_FRAME_AT");
+			s_dump_at     = (s != nullptr ? atoi(s) : 120);
+		}
+		if (s_dump_n++ == s_dump_at)
 		{
 			uint32_t w    = image->extent.width;
 			uint32_t h    = image->extent.height;
@@ -2461,7 +2467,16 @@ void WindowDrawBuffer(VideoOutVulkanImage* image)
 			               static_cast<uint64_t>(image->layout));
 
 			static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-			const int         step  = 4;
+			// Downsample factor for the dump; KYTY_DUMP_FRAME_STEP overrides (1 = full res).
+			int step = 4;
+			if (const char* s = getenv("KYTY_DUMP_FRAME_STEP"); s != nullptr)
+			{
+				step = atoi(s);
+				if (step < 1)
+				{
+					step = 1;
+				}
+			}
 			int               ow    = static_cast<int>(w) / step;
 			int               oh    = static_cast<int>(h) / step;
 			Kyty::printf("KFRAME_BEGIN %d %d\n", ow, oh);
