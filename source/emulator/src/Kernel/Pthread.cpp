@@ -414,7 +414,13 @@ void* PthreadStaticObjects::CreateObject(void* addr, PthreadStaticObject::Type t
 	auto  vaddr   = reinterpret_cast<uint64_t>(addr);
 	auto* program = rt->FindProgramByAddr(vaddr);
 
-	EXIT_NOT_IMPLEMENTED(program == nullptr);
+	// A static-initialized (PTHREAD_*_INITIALIZER) sync object may live in guest
+	// heap/mmap memory rather than a loaded module's segments — e.g. a calloc'd
+	// struct whose zeroed pthread_mutex_t field is locked on first use. Such an
+	// object is owned by no module, so program == nullptr is valid, not an error.
+	// It just won't be auto-destroyed on module unload: DeleteObjects only runs
+	// with a non-null program (from StopModule), so a null-program object is never
+	// swept — correct, since the guest owns a heap object's lifetime.
 
 	auto* obj    = new PthreadStaticObject;
 	obj->program = program;
