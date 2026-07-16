@@ -2768,7 +2768,12 @@ ShaderCode ShaderParsePS(const HW::PixelShaderInfo* regs, const HW::ShaderRegist
 		ps_print("ShaderParsePS()", regs->ps_regs, *sh);
 		ps_check(regs->ps_regs, *sh);
 
-		EXIT_NOT_IMPLEMENTED(regs->ps_regs.rsrc2.user_sgpr > regs->ps_user_sgpr.count);
+		// psbc over-declares rsrc2.user_sgpr (e.g. 4) while the driver sets fewer user
+		// data registers (e.g. freegnm sets just a 64-bit resource pointer in s0-s1).
+		// The shader does not read the excess SGPRs — its input-usage table is empty —
+		// and any user SGPR the driver left unset reads as 0 (UserSgprInfo::value[] is
+		// zero-initialized and sized to SGPRS_MAX). So a declared count above the
+		// driver's set high-water mark is legal, not unimplemented.
 
 		const auto* src = reinterpret_cast<const uint32_t*>(regs->ps_regs.data_addr);
 
