@@ -90,6 +90,10 @@ void InjectWheel(int index, int wheel)
 int KYTY_SYSV_ABI MouseInit()
 {
 	PRINT_NAME();
+
+	// Bind physical mice (Linux evdev) on first init when KYTY_MOUSE_EVDEV is set.
+	EvdevStart();
+
 	return OK;
 }
 

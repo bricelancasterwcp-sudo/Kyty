@@ -24,6 +24,11 @@ void InjectMotion(int index, int dx, int dy);
 void InjectButton(int index, uint32_t button, bool down);
 void InjectWheel(int index, int wheel);
 
+// Start the Linux evdev reader (once) when KYTY_MOUSE_EVDEV is set, binding up to
+// two physical mice to emulated mouse 0/1 for true multi-pointer control. No-op
+// on non-Linux or when the env var is unset. Needs read access to /dev/input.
+void EvdevStart();
+
 } // namespace Kyty::Libs::Mouse
 
 #endif // KYTY_EMU_ENABLED
