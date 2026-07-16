@@ -1408,7 +1408,7 @@ static void ShaderGetDirectSgpr(ShaderDirectSgprsResources* info, int start_inde
 // guessing an arbitrary descriptor-load base risks selecting an SGPR the CPU
 // never populated (via SET_SH_REG), which would be read as a garbage guest
 // pointer and crash. So fail loud instead of guessing.
-static int ShaderFindIndirectTableBase(const uint32_t* code, int usage_register)
+static int ShaderFindIndirectTableBase(const uint32_t* code, int usage_register, bool allow_missing = false)
 {
 	EXIT_IF(code == nullptr);
 
@@ -1444,7 +1444,11 @@ static int ShaderFindIndirectTableBase(const uint32_t* code, int usage_register)
 		}
 	}
 
-	EXIT_NOT_IMPLEMENTED(!exact && !minus_one);
+	if (!exact && !minus_one)
+	{
+		EXIT_NOT_IMPLEMENTED(!allow_missing);
+		return -1;
+	}
 	return exact ? usage_register : (usage_register - 1);
 }
 
@@ -1830,6 +1834,57 @@ void ShaderParseUsage(uint64_t addr, ShaderParsedUsage* info, ShaderBindResource
 				}
 
 			default: EXIT("unknown usage type: 0x%02" PRIx8 "\n", usage.type);
+		}
+	}
+
+	// psbc / OrbShdr binaries carry no input-usage slots (num_input_usage_slots == 0), yet
+	// still load resources from an internal resource table addressed by the first user SGPR
+	// pair (s0-s1 by psbc convention). If the usage table bound no extended table but the code
+	// dereferences such a pointer, discover and bind its descriptors exactly as the 0x1c path
+	// does (base recovered from the code; entries classified by their downstream consumer).
+	if (!bind->extended.used && user_sgpr_num >= 2)
+	{
+		int base_register = ShaderFindIndirectTableBase(src, 0, /*allow_missing=*/true);
+		if (base_register >= 0 && base_register + 1 < HW::UserSgprInfo::SGPRS_MAX)
+		{
+			ShaderIndirectEntry entries[16];
+			int                 entries_num = ShaderFindIndirectTableEntries(src, base_register, entries, 16);
+			if (entries_num > 0)
+			{
+				bind->extended.used             = true;
+				bind->extended.slot             = 0;
+				bind->extended.start_register   = base_register;
+				bind->extended.data.fields[0]   = user_sgpr.value[base_register];
+				bind->extended.data.fields[1]   = user_sgpr.value[base_register + 1];
+				extended_buffer                 = reinterpret_cast<uint32_t*>(bind->extended.data.Base());
+				info->extended_buffer           = true;
+				direct_sgprs[base_register]     = false;
+				direct_sgprs[base_register + 1] = false;
+
+				for (int ei = 0; ei < entries_num; ei++)
+				{
+					EXIT_NOT_IMPLEMENTED((entries[ei].offset_dw % 4) != 0);
+					int start = static_cast<int>(16 + entries[ei].offset_dw);
+					int slot  = static_cast<int>(entries[ei].offset_dw / 4);
+					switch (entries[ei].kind)
+					{
+						case ShaderIndirectKind::Texture:
+							ShaderGetTextureBuffer(&bind->textures2D, direct_sgprs, start, slot, ShaderTextureUsage::ReadOnly, user_sgpr,
+							                       extended_buffer);
+							info->textures2D_readonly++;
+							break;
+						case ShaderIndirectKind::Sampler:
+							ShaderGetSampler(&bind->samplers, direct_sgprs, start, slot, user_sgpr, extended_buffer);
+							info->samplers++;
+							break;
+						case ShaderIndirectKind::Buffer:
+							ShaderGetStorageBuffer(&bind->storage_buffers, direct_sgprs, start, slot, ShaderStorageUsage::Constant, user_sgpr,
+							                       extended_buffer);
+							info->storage_buffers_constant++;
+							break;
+					}
+				}
+			}
 		}
 	}
 
@@ -2666,13 +2721,10 @@ ShaderCode ShaderParseVS(const HW::VertexShaderInfo* regs, const HW::ShaderRegis
 		vs_print("ShaderParseVS()", *regs, *sh);
 		vs_check(*regs, *sh);
 
-		if (gs_instead_of_vs)
-		{
-			EXIT_NOT_IMPLEMENTED(regs->gs_regs.rsrc2.user_sgpr > regs->gs_user_sgpr.count);
-		} else
-		{
-			EXIT_NOT_IMPLEMENTED(regs->vs_regs.rsrc2.user_sgpr > regs->vs_user_sgpr.count);
-		}
+		// psbc over-declares rsrc2.user_sgpr (same as the pixel-shader path, see ShaderParsePS):
+		// it may exceed the number of user-data registers the driver actually set. Unset user
+		// SGPRs read as 0 (UserSgprInfo::value[] is zero-initialized), so a declared count above
+		// the driver's set high-water mark is legal, not unimplemented.
 
 		if (Config::IsNextGen())
 		{
