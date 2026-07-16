@@ -437,6 +437,49 @@ void game_event_terminate(GameApi* game)
 	game->m_game_need_exit = true;
 }
 
+// --- Keyboard -> virtual DualShock -----------------------------------------
+// Lets titles that poll scePad be driven from the keyboard when no physical
+// controller is attached. A single virtual pad (KEYBOARD_PAD_ID) is connected
+// lazily on first use.
+static constexpr int KEYBOARD_PAD_ID = 0x6B6579; // 'key'
+
+static void ensure_kbd_pad_connected()
+{
+	static bool connected = false;
+	if (!connected)
+	{
+		Controller::ControllerConnect(KEYBOARD_PAD_ID);
+		connected = true;
+	}
+}
+
+// KYTY_PAD_DEMO scripts a fixed pad-input sequence by flip count, so the
+// pad->title path can be exercised without an interactive session (debug only).
+static void kyty_pad_demo_tick()
+{
+	static const bool enabled = (getenv("KYTY_PAD_DEMO") != nullptr);
+	if (!enabled)
+	{
+		return;
+	}
+	static uint64_t flip = 0;
+	uint64_t        f    = flip++;
+	auto            btn  = [](uint32_t b, bool down) { Controller::ControllerButton(KEYBOARD_PAD_ID, b, down); };
+	switch (f)
+	{
+		case 20: ensure_kbd_pad_connected(); break;
+		case 40: btn(Controller::PAD_BUTTON_CROSS, true); break;  // select START GAME
+		case 48: btn(Controller::PAD_BUTTON_CROSS, false); break;
+		case 70: btn(Controller::PAD_BUTTON_LEFT, true); break;   // slide tiles
+		case 78: btn(Controller::PAD_BUTTON_LEFT, false); break;
+		case 100: btn(Controller::PAD_BUTTON_DOWN, true); break;
+		case 108: btn(Controller::PAD_BUTTON_DOWN, false); break;
+		case 130: btn(Controller::PAD_BUTTON_RIGHT, true); break;
+		case 138: btn(Controller::PAD_BUTTON_RIGHT, false); break;
+		default: break;
+	}
+}
+
 void game_event_keyboard(GameApi* game, const EventKeyboard* key)
 {
 #ifdef KYTY_DBG_INPUT
@@ -446,6 +489,34 @@ void game_event_keyboard(GameApi* game, const EventKeyboard* key)
 #endif
 
 	Libs::Keyboard::KeyboardHandleEvent(key->scan_code, key->down, key->mod);
+
+	// Keyboard -> virtual DualShock: arrows = D-pad, Enter/X = cross, etc., so a
+	// title polling scePad is playable with no physical controller attached.
+	{
+		uint32_t pad_button = 0;
+		switch (key->key_code)
+		{
+			case SDLK_UP: pad_button = Controller::PAD_BUTTON_UP; break;
+			case SDLK_DOWN: pad_button = Controller::PAD_BUTTON_DOWN; break;
+			case SDLK_LEFT: pad_button = Controller::PAD_BUTTON_LEFT; break;
+			case SDLK_RIGHT: pad_button = Controller::PAD_BUTTON_RIGHT; break;
+			case SDLK_RETURN:
+			case SDLK_x: pad_button = Controller::PAD_BUTTON_CROSS; break;
+			case SDLK_BACKSPACE:
+			case SDLK_c: pad_button = Controller::PAD_BUTTON_CIRCLE; break;
+			case SDLK_z: pad_button = Controller::PAD_BUTTON_SQUARE; break;
+			case SDLK_s: pad_button = Controller::PAD_BUTTON_TRIANGLE; break;
+			case SDLK_a: pad_button = Controller::PAD_BUTTON_L1; break;
+			case SDLK_d: pad_button = Controller::PAD_BUTTON_R1; break;
+			case SDLK_TAB: pad_button = Controller::PAD_BUTTON_OPTIONS; break;
+			default: break;
+		}
+		if (pad_button != 0)
+		{
+			ensure_kbd_pad_connected();
+			Controller::ControllerButton(KEYBOARD_PAD_ID, pad_button, key->down);
+		}
+	}
 
 #if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS || KYTY_PLATFORM == KYTY_PLATFORM_LINUX
 	// Ctrl+Q always quits, even when a title owns the keyboard
@@ -2341,6 +2412,8 @@ void WindowUpdateTitle()
 void WindowDrawBuffer(VideoOutVulkanImage* image)
 {
 	KYTY_PROFILER_FUNCTION();
+
+	kyty_pad_demo_tick();
 
 	EXIT_IF(image == nullptr);
 	EXIT_IF(g_window_ctx == nullptr);
