@@ -186,7 +186,7 @@ static void update_func(GraphicContext* ctx, const uint64_t* params, void* obj, 
 		TileGetTextureSize2(fmt, width, height, pitch, levels, tile, nullptr, level_sizes, nullptr);
 	} else
 	{
-		EXIT_NOT_IMPLEMENTED(tile != 8 && tile != 13 && tile != 31);
+		EXIT_NOT_IMPLEMENTED(tile != 8 && tile != 13 && tile != 31 && tile != 14);
 
 		TileGetTextureSize(dfmt, nfmt, width, height, pitch, levels, tile, neo, nullptr, level_sizes, nullptr);
 	}
@@ -226,7 +226,7 @@ static void update_func(GraphicContext* ctx, const uint64_t* params, void* obj, 
 
 	if (fmt == 0)
 	{
-		if (tile == 13)
+		if (tile == 13 || tile == 14)
 		{
 			// EXIT_NOT_IMPLEMENTED(pitch != width);
 			EXIT_NOT_IMPLEMENTED(fmt != 0);

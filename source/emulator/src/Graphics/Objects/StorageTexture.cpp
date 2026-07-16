@@ -150,7 +150,7 @@ static void update_func(GraphicContext* ctx, const uint64_t* params, void* obj, 
 
 	EXIT_NOT_IMPLEMENTED(levels >= 16);
 
-	EXIT_NOT_IMPLEMENTED(tile != 8 && tile != 13);
+	EXIT_NOT_IMPLEMENTED(tile != 8 && tile != 13 && tile != 14);
 
 	TileSizeOffset level_sizes[16];
 
@@ -197,7 +197,7 @@ static void update_func(GraphicContext* ctx, const uint64_t* params, void* obj, 
 		}
 	}
 
-	if (tile == 13)
+	if (tile == 13 || tile == 14)
 	{
 		// EXIT_NOT_IMPLEMENTED(pitch != width);
 		EXIT_NOT_IMPLEMENTED(fmt != 0);
