@@ -4,11 +4,9 @@
 #include "Emulator/Common.h"
 #include "Emulator/Kernel/Pthread.h"
 #include "Emulator/Libs/Errno.h"
+#include "Emulator/Libs/LibMouse.h"
 #include "Emulator/Libs/Libs.h"
 #include "Emulator/Loader/SymbolDatabase.h"
-
-#include <cmath>
-#include <cstdlib>
 
 #ifdef KYTY_EMU_ENABLED
 
@@ -38,47 +36,55 @@ struct MouseData
 
 constexpr int MOUSE_COUNT = 2;
 
+// Host input accumulated between guest reads. Motion/wheel are relative and drain
+// on each read; button state is a held bitmask.
 struct MouseSlot
 {
-	bool    opened      = false;
-	double  demo_prev_x = 0.0; // last synthetic cursor point (for delta emission)
-	double  demo_prev_y = 0.0;
-	int64_t demo_tick   = 0;
+	bool     opened   = false;
+	int32_t  acc_dx   = 0;
+	int32_t  acc_dy   = 0;
+	int32_t  acc_wheel = 0;
+	uint32_t buttons  = 0;
 };
 
 static Core::Mutex g_mouse_mutex;
 static MouseSlot   g_mouse[MOUSE_COUNT];
 
-static bool demo_enabled()
+void InjectMotion(int index, int dx, int dy)
 {
-	static const bool enabled = (getenv("KYTY_MOUSE_DEMO") != nullptr);
-	return enabled;
+	if (index < 0 || index >= MOUSE_COUNT)
+	{
+		return;
+	}
+	Core::LockGuard lock(g_mouse_mutex);
+	g_mouse[index].acc_dx += dx;
+	g_mouse[index].acc_dy += dy;
 }
 
-// Synthetic mouse motion so a mouse-driven title is demonstrably controllable
-// with no physical device attached (headless fc_script). Each mouse traces a
-// figure-eight; the second mouse runs in anti-phase so the two arms M.I.C.E.
-// binds to mouse 0 / mouse 1 sweep distinctly. Returns the per-read delta.
-static void demo_delta(int index, int32_t* dx, int32_t* dy)
+void InjectButton(int index, uint32_t button, bool down)
 {
-	auto& slot = g_mouse[index];
+	if (index < 0 || index >= MOUSE_COUNT)
+	{
+		return;
+	}
+	Core::LockGuard lock(g_mouse_mutex);
+	if (down)
+	{
+		g_mouse[index].buttons |= button;
+	} else
+	{
+		g_mouse[index].buttons &= ~button;
+	}
+}
 
-	constexpr double kAmplitude = 120.0; // px, pre M.I.C.E. 2x scale
-	constexpr double kPeriodSec = 2.5;
-	constexpr double kReadSec   = 0.008; // M.I.C.E. polls every ~8ms
-
-	double t     = static_cast<double>(slot.demo_tick++) * kReadSec;
-	double phase = (index == 0 ? 0.0 : 3.14159265358979323846); // mouse 1 anti-phase
-	double w     = 2.0 * 3.14159265358979323846 / kPeriodSec;
-
-	double x = kAmplitude * std::sin(w * t + phase);
-	double y = kAmplitude * 0.5 * std::sin(2.0 * w * t + phase);
-
-	*dx = static_cast<int32_t>(std::lround(x - slot.demo_prev_x));
-	*dy = static_cast<int32_t>(std::lround(y - slot.demo_prev_y));
-
-	slot.demo_prev_x = x;
-	slot.demo_prev_y = y;
+void InjectWheel(int index, int wheel)
+{
+	if (index < 0 || index >= MOUSE_COUNT)
+	{
+		return;
+	}
+	Core::LockGuard lock(g_mouse_mutex);
+	g_mouse[index].acc_wheel += wheel;
 }
 
 int KYTY_SYSV_ABI MouseInit()
@@ -129,25 +135,34 @@ int KYTY_SYSV_ABI MouseRead(int handle, MouseData* data, int num)
 	EXIT_NOT_IMPLEMENTED(data == nullptr);
 	EXIT_NOT_IMPLEMENTED(num < 1);
 
-	int32_t dx = 0;
-	int32_t dy = 0;
+	int32_t  dx      = 0;
+	int32_t  dy      = 0;
+	int32_t  wheel   = 0;
+	uint32_t buttons = 0;
 
 	{
 		Core::LockGuard lock(g_mouse_mutex);
-		if (demo_enabled())
-		{
-			demo_delta(index, &dx, &dy);
-		}
+		auto&           slot = g_mouse[index];
+
+		dx      = slot.acc_dx;
+		dy      = slot.acc_dy;
+		wheel   = slot.acc_wheel;
+		buttons = slot.buttons;
+
+		// Relative motion is consumed; held buttons persist for the next read.
+		slot.acc_dx    = 0;
+		slot.acc_dy    = 0;
+		slot.acc_wheel = 0;
 	}
 
-	// Emit a single sample carrying the relative motion since the last read.
-	// connected must be true or the guest tears down its mouse reader thread.
+	// Emit a single sample carrying the motion since the last read. connected must
+	// be true or the guest tears down its mouse reader thread.
 	data[0].timestamp = LibKernel::KernelGetProcessTime();
 	data[0].connected = true;
-	data[0].buttons   = 0;
+	data[0].buttons   = buttons;
 	data[0].x_axis    = dx;
 	data[0].y_axis    = dy;
-	data[0].wheel     = 0;
+	data[0].wheel     = wheel;
 	data[0].tilt      = 0;
 	for (unsigned char& b: data[0].reserve)
 	{

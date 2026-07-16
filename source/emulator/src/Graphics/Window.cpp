@@ -18,6 +18,7 @@
 #include "Emulator/Graphics/Utils.h"
 #include "Emulator/Graphics/VideoOut.h"
 #include "Emulator/Keyboard.h"
+#include "Emulator/Libs/LibMouse.h"
 #include "Emulator/Loader/SystemContent.h"
 #include "Emulator/Profiler.h"
 
@@ -26,6 +27,8 @@
 #include "SDL_events.h"
 #include "SDL_gamecontroller.h"
 #include "SDL_joystick.h"
+
+#include <cmath>
 #include "SDL_keyboard.h"
 #include "SDL_keycode.h"
 #include "SDL_mouse.h"
@@ -480,6 +483,49 @@ static void kyty_pad_demo_tick()
 	}
 }
 
+// Drive the host pointer along a figure-eight by pushing real SDL_MOUSEMOTION
+// events. This exercises the exact path a physical mouse takes
+// (game_process_event -> game_event_mouse -> Mouse::InjectMotion), so a
+// mouse-only title is demonstrably controllable with no device attached.
+static void kyty_mouse_demo_tick()
+{
+	static const bool enabled = (getenv("KYTY_MOUSE_DEMO") != nullptr);
+	if (!enabled)
+	{
+		return;
+	}
+
+	static int64_t tick   = 0;
+	static double  prev_x = 0.0;
+	static double  prev_y = 0.0;
+
+	constexpr double kAmplitude = 120.0;
+	constexpr double kPeriodSec = 2.5;
+	constexpr double kTickSec   = 0.016; // roughly one presented frame
+
+	double t = static_cast<double>(tick++) * kTickSec;
+	double w = 2.0 * 3.14159265358979323846 / kPeriodSec;
+	double x = kAmplitude * std::sin(w * t);
+	double y = kAmplitude * 0.5 * std::sin(2.0 * w * t);
+
+	auto dx = static_cast<int32_t>(std::lround(x - prev_x));
+	auto dy = static_cast<int32_t>(std::lround(y - prev_y));
+	prev_x  = x;
+	prev_y  = y;
+
+	if (dx != 0 || dy != 0)
+	{
+		SDL_Event ev {};
+		ev.type         = SDL_MOUSEMOTION;
+		ev.motion.type  = SDL_MOUSEMOTION;
+		ev.motion.which = 0;
+		ev.motion.state = 0;
+		ev.motion.xrel  = dx;
+		ev.motion.yrel  = dy;
+		SDL_PushEvent(&ev);
+	}
+}
+
 void game_event_keyboard(GameApi* game, const EventKeyboard* key)
 {
 #ifdef KYTY_DBG_INPUT
@@ -562,6 +608,41 @@ void game_event_mouse([[maybe_unused]] GameApi* game, [[maybe_unused]] const Eve
 		       (mb->pressed ? "pressed" : ""), (mb->released ? "released" : ""), mb->x, mb->y);
 	}
 #endif
+
+	// Route the host pointer into the emulated primary mouse (index 0) so
+	// mouse-driven titles are playable with a real device. A second emulated
+	// mouse (index 1) would need raw multi-pointer input, which SDL's single
+	// system pointer does not provide.
+	if (mb->motion)
+	{
+		Mouse::InjectMotion(0, mb->motion_x, mb->motion_y);
+	} else if (mb->wheel)
+	{
+		Mouse::InjectWheel(0, mb->y);
+	} else
+	{
+		uint32_t button = 0;
+		if (mb->left)
+		{
+			button = Mouse::MOUSE_BUTTON_LEFT;
+		} else if (mb->right)
+		{
+			button = Mouse::MOUSE_BUTTON_RIGHT;
+		} else if (mb->middle)
+		{
+			button = Mouse::MOUSE_BUTTON_MIDDLE;
+		} else if (mb->x1)
+		{
+			button = Mouse::MOUSE_BUTTON_SIDE1;
+		} else if (mb->x2)
+		{
+			button = Mouse::MOUSE_BUTTON_SIDE2;
+		}
+		if (button != 0)
+		{
+			Mouse::InjectButton(0, button, mb->down);
+		}
+	}
 }
 
 void game_event_finger([[maybe_unused]] GameApi* game, [[maybe_unused]] const EventFinger* f)
@@ -2414,6 +2495,7 @@ void WindowDrawBuffer(VideoOutVulkanImage* image)
 	KYTY_PROFILER_FUNCTION();
 
 	kyty_pad_demo_tick();
+	kyty_mouse_demo_tick();
 
 	EXIT_IF(image == nullptr);
 	EXIT_IF(g_window_ctx == nullptr);
