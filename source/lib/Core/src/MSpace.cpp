@@ -557,4 +557,61 @@ void* MSpaceRealloc(mspace_t msp, void* ptr, size_t size)
 	return MSpaceInternalRealloc_align(*ctx, ptr, static_cast<uint32_t>(size), 32);
 }
 
+void* MSpaceCalloc(mspace_t msp, size_t nelem, size_t size)
+{
+	if (msp == nullptr)
+	{
+		return nullptr;
+	}
+
+	// Guard the nelem*size product against overflow before it is truncated into
+	// the allocator's 32-bit size domain (matches the (size >> 32) checks below).
+	uint64_t total = static_cast<uint64_t>(nelem) * static_cast<uint64_t>(size);
+
+	if (size != 0 && total / size != nelem)
+	{
+		return nullptr;
+	}
+
+	if ((total >> 32u) != 0)
+	{
+		return nullptr;
+	}
+
+	auto* ctx = static_cast<MSpaceContext*>(msp);
+
+	// Same 32-byte alignment as MSpaceMalloc so the block frees through the shared
+	// MSpaceInternalFree_align back-pointer path.
+	auto* p = MSpaceInternalMalloc_align(*ctx, static_cast<uint32_t>(total), 32);
+	if (p != nullptr)
+	{
+		memset(p, 0, static_cast<size_t>(total));
+	}
+	return p;
+}
+
+void* MSpaceMemalign(mspace_t msp, size_t boundary, size_t size)
+{
+	if (msp == nullptr)
+	{
+		return nullptr;
+	}
+
+	// align() masks with (boundary - 1), so a zero or non-power-of-two boundary
+	// would compute a bogus aligned address.
+	if (boundary == 0 || (boundary & (boundary - 1)) != 0)
+	{
+		return nullptr;
+	}
+
+	if ((size >> 32u) != 0)
+	{
+		return nullptr;
+	}
+
+	auto* ctx = static_cast<MSpaceContext*>(msp);
+
+	return MSpaceInternalMalloc_align(*ctx, static_cast<uint32_t>(size), boundary);
+}
+
 } // namespace Kyty::Core

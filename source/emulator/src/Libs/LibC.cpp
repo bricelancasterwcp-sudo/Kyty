@@ -345,6 +345,57 @@ void KYTY_SYSV_ABI LibcMspaceFree(void* msp, void* ptr)
 	Core::MSpaceFree(msp, ptr);
 }
 
+void* KYTY_SYSV_ABI LibcMspaceRealloc(void* msp, void* ptr, size_t size)
+{
+	PRINT_NAME();
+
+	printf("\t ptr  = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(ptr));
+	printf("\t size = %016" PRIx64 "\n", size);
+
+	auto* buf = Core::MSpaceRealloc(msp, ptr, size);
+
+	printf("\t buf  = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(buf));
+
+	// realloc(ptr, 0) legally frees ptr and returns nullptr; only a nonzero-size
+	// request that returns nullptr is a genuine allocation failure.
+	EXIT_NOT_IMPLEMENTED(buf == nullptr && size != 0);
+
+	return buf;
+}
+
+void* KYTY_SYSV_ABI LibcMspaceCalloc(void* msp, size_t nelem, size_t size)
+{
+	PRINT_NAME();
+
+	printf("\t nelem = %016" PRIx64 "\n", nelem);
+	printf("\t size  = %016" PRIx64 "\n", size);
+
+	auto* buf = Core::MSpaceCalloc(msp, nelem, size);
+
+	printf("\t buf   = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(buf));
+
+	// A zero-element or zero-size request may legitimately return nullptr.
+	EXIT_NOT_IMPLEMENTED(buf == nullptr && nelem != 0 && size != 0);
+
+	return buf;
+}
+
+void* KYTY_SYSV_ABI LibcMspaceMemalign(void* msp, size_t boundary, size_t size)
+{
+	PRINT_NAME();
+
+	printf("\t boundary = %016" PRIx64 "\n", boundary);
+	printf("\t size     = %016" PRIx64 "\n", size);
+
+	auto* buf = Core::MSpaceMemalign(msp, boundary, size);
+
+	printf("\t buf      = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(buf));
+
+	EXIT_NOT_IMPLEMENTED(buf == nullptr && size != 0);
+
+	return buf;
+}
+
 LIB_DEFINE(InitLibcInternal_1)
 {
 	LibcInternalExt::InitLibcInternalExt_1(s);
@@ -364,6 +415,9 @@ LIB_DEFINE(InitLibcInternal_1)
 	LIB_FUNC("W6SiVSiCDtI", LibcInternal::LibcMspaceDestroy);
 	LIB_FUNC("OJjm-QOIHlI", LibcInternal::LibcMspaceMalloc);
 	LIB_FUNC("Vla-Z+eXlxo", LibcInternal::LibcMspaceFree);
+	LIB_FUNC("gigoVHZvVPE", LibcInternal::LibcMspaceRealloc);  // sceLibcMspaceRealloc
+	LIB_FUNC("LYo3GhIlB38", LibcInternal::LibcMspaceCalloc);   // sceLibcMspaceCalloc
+	LIB_FUNC("iF1iQHzxBJU", LibcInternal::LibcMspaceMemalign); // sceLibcMspaceMemalign
 }
 
 } // namespace LibcInternal
