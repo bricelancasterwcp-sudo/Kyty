@@ -4,6 +4,8 @@
 #include "Kyty/Core/MSpace.h"
 #include "Kyty/Core/Singleton.h"
 #include "Kyty/Core/String.h"
+#include "Kyty/Core/Threads.h"
+#include "Kyty/Core/VirtualMemory.h"
 
 #include "Emulator/Common.h"
 #include "Emulator/Libs/Libs.h"
@@ -12,6 +14,7 @@
 #include "Emulator/Loader/SymbolDatabase.h"
 
 #include <cstdlib>
+#include <map>
 
 #ifdef KYTY_EMU_ENABLED
 
@@ -191,6 +194,23 @@ void* KYTY_SYSV_ABI memset(void* s, int c, size_t n)
 	return ::memset(s, c, n);
 }
 
+// Tracks mspaces whose backing buffer we allocated ourselves (base == nullptr path).
+// Caller-owned (placement) mspaces are never inserted, so their buffers are never freed.
+struct MspaceRegistry
+{
+	Core::Mutex                mutex;
+	std::map<void*, uint64_t>  self_allocated; // mspace ptr -> guest base address returned by Alloc
+};
+
+// Function-local static: C++11 guarantees thread-safe first-use initialization.
+// (Core::Singleton's lazy init is unlocked, which would defeat the registry's
+// entire purpose of making self-allocated mspace tracking thread-safe.)
+static MspaceRegistry& MspaceReg()
+{
+	static MspaceRegistry reg;
+	return reg;
+}
+
 void* KYTY_SYSV_ABI LibcMspaceCreate(const char* name, void* base, size_t capacity, uint32_t flag)
 {
 	PRINT_NAME();
@@ -202,7 +222,6 @@ void* KYTY_SYSV_ABI LibcMspaceCreate(const char* name, void* base, size_t capaci
 
 	EXIT_NOT_IMPLEMENTED(flag != 0 && flag != 1);
 	EXIT_NOT_IMPLEMENTED(name == nullptr);
-	EXIT_NOT_IMPLEMENTED(base == nullptr);
 	EXIT_NOT_IMPLEMENTED(capacity == 0);
 
 	bool thread_safe = true;
@@ -212,11 +231,94 @@ void* KYTY_SYSV_ABI LibcMspaceCreate(const char* name, void* base, size_t capaci
 		thread_safe = false;
 	}
 
-	auto* msp = Core::MSpaceCreate(name, base, capacity, thread_safe, nullptr);
+	// Caller-owned placement path: unchanged. Never tracked, never freed by us.
+	if (base != nullptr)
+	{
+		auto* msp = Core::MSpaceCreate(name, base, capacity, thread_safe, nullptr);
 
-	EXIT_NOT_IMPLEMENTED(msp == nullptr);
+		EXIT_NOT_IMPLEMENTED(msp == nullptr);
+
+		return msp;
+	}
+
+	// Self-allocated path: reserve guest RW memory to back the mspace.
+	// address=0 routes through the backend's low-VA mmap, yielding a page-aligned
+	// base (>= 8-byte aligned, satisfying MSpaceCreate). On failure the backend
+	// returns MAP_FAILED cast to (uint64_t)-1, not 0, so both are treated as failure.
+	uint64_t guest_base = Core::VirtualMemory::Alloc(0, capacity, Core::VirtualMemory::Mode::ReadWrite);
+
+	if (guest_base == 0 || guest_base == static_cast<uint64_t>(-1))
+	{
+		printf("\t LibcMspaceCreate: guest allocation failed for capacity %016" PRIx64 "\n", capacity);
+		return nullptr;
+	}
+
+	// address=0 tries the guest low-VA mmap first but can fall back to mmap(NULL,...)
+	// outside the guest window on exhaustion; such a base violates the emulator's
+	// address constraints, so reject (and free) it rather than hand it to MSpaceCreate.
+	if (guest_base < 0x2000000000ULL || guest_base + capacity > 0x10000000000ULL)
+	{
+		Core::VirtualMemory::Free(guest_base);
+		printf("\t LibcMspaceCreate: allocation out of guest window (%016" PRIx64 ")\n", guest_base);
+		return nullptr;
+	}
+
+	auto* msp = Core::MSpaceCreate(name, reinterpret_cast<void*>(guest_base), capacity, thread_safe, nullptr);
+
+	if (msp == nullptr)
+	{
+		Core::VirtualMemory::Free(guest_base);
+		printf("\t LibcMspaceCreate: MSpaceCreate rejected self-allocated buffer\n");
+		return nullptr;
+	}
+
+	// Track under lock so Destroy can free the buffer. (The project builds with
+	// -fno-exceptions, so the map insertion cannot unwind across the ABI boundary.)
+	{
+		auto&           reg = MspaceReg();
+		Core::LockGuard lock(reg.mutex);
+		reg.self_allocated.emplace(msp, guest_base);
+	}
+
+	printf("\t LibcMspaceCreate: self-allocated base = %016" PRIx64 "\n", guest_base);
 
 	return msp;
+}
+
+int KYTY_SYSV_ABI LibcMspaceDestroy(void* msp)
+{
+	PRINT_NAME();
+
+	printf("\t msp = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(msp));
+
+	uint64_t base  = 0;
+	bool     found = false;
+
+	// Hold the registry lock across the whole teardown so a concurrent destroy of the
+	// same self-allocated handle serializes behind the erase (can't race destroy/free).
+	auto&           reg = MspaceReg();
+	Core::LockGuard lock(reg.mutex);
+
+	auto it = reg.self_allocated.find(msp);
+	if (it != reg.self_allocated.end())
+	{
+		base  = it->second;
+		found = true;
+		reg.self_allocated.erase(it);
+	}
+
+	// Runs while the buffer is still mapped: MSpaceDestroy dereferences the
+	// MSpaceContext (which lives at guest_base) to delete its internal mutex, so it
+	// must precede Free. Caller-owned (placement) mspaces are never in the registry,
+	// so this reproduces prior behavior for them: destroy the mspace, never free.
+	Core::MSpaceDestroy(msp);
+
+	if (found)
+	{
+		Core::VirtualMemory::Free(base);
+	}
+
+	return 0;
 }
 
 void* KYTY_SYSV_ABI LibcMspaceMalloc(void* msp, size_t size)
@@ -232,6 +334,15 @@ void* KYTY_SYSV_ABI LibcMspaceMalloc(void* msp, size_t size)
 	EXIT_NOT_IMPLEMENTED(buf == nullptr);
 
 	return buf;
+}
+
+void KYTY_SYSV_ABI LibcMspaceFree(void* msp, void* ptr)
+{
+	PRINT_NAME();
+
+	printf("\t ptr = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(ptr));
+
+	Core::MSpaceFree(msp, ptr);
 }
 
 LIB_DEFINE(InitLibcInternal_1)
@@ -250,7 +361,9 @@ LIB_DEFINE(InitLibcInternal_1)
 	LIB_FUNC("H2e8t5ScQGc", LibC::cxa_finalize);
 
 	LIB_FUNC("-hn1tcVHq5Q", LibcInternal::LibcMspaceCreate);
+	LIB_FUNC("W6SiVSiCDtI", LibcInternal::LibcMspaceDestroy);
 	LIB_FUNC("OJjm-QOIHlI", LibcInternal::LibcMspaceMalloc);
+	LIB_FUNC("Vla-Z+eXlxo", LibcInternal::LibcMspaceFree);
 }
 
 } // namespace LibcInternal
