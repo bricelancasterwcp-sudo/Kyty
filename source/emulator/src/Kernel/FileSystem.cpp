@@ -478,14 +478,25 @@ int64_t KYTY_SYSV_ABI KernelWrite(int d, const void* buf, size_t nbytes)
 
 	EXIT_IF(g_files == nullptr);
 
-	if (d < DESCRIPTOR_MIN)
-	{
-		return KERNEL_ERROR_EPERM;
-	}
-
 	if (buf == nullptr)
 	{
 		return KERNEL_ERROR_EFAULT;
+	}
+
+	// guest stdout/stderr: echo to the host log (was silently EPERM'd, which
+	// discarded every Platform_Log line a title printed)
+	if (d == 1 || d == 2)
+	{
+		// clamp: a negative %.*s precision (nbytes > INT_MAX) would degrade to
+		// %s and read past the buffer
+		int len = static_cast<int>(nbytes > INT_MAX ? INT_MAX : nbytes);
+		printf(FG_GREEN "[guest] " FG_DEFAULT "%.*s", len, static_cast<const char*>(buf));
+		return static_cast<int64_t>(nbytes);
+	}
+
+	if (d < DESCRIPTOR_MIN)
+	{
+		return KERNEL_ERROR_EPERM;
 	}
 
 	auto* file = g_files->GetFile(d);
