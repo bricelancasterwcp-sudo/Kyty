@@ -20,6 +20,7 @@
 #include "Emulator/Keyboard.h"
 #include "Emulator/Libs/LibMouse.h"
 #include "Emulator/Loader/SystemContent.h"
+#include "Emulator/PadFps.h"
 #include "Emulator/Profiler.h"
 
 #include "SDL.h"
@@ -440,22 +441,6 @@ void game_event_terminate(GameApi* game)
 	game->m_game_need_exit = true;
 }
 
-// --- Keyboard -> virtual DualShock -----------------------------------------
-// Lets titles that poll scePad be driven from the keyboard when no physical
-// controller is attached. A single virtual pad (KEYBOARD_PAD_ID) is connected
-// lazily on first use.
-static constexpr int KEYBOARD_PAD_ID = 0x6B6579; // 'key'
-
-static void ensure_kbd_pad_connected()
-{
-	static bool connected = false;
-	if (!connected)
-	{
-		Controller::ControllerConnect(KEYBOARD_PAD_ID);
-		connected = true;
-	}
-}
-
 // KYTY_PAD_DEMO scripts a fixed pad-input sequence by flip count, so the
 // pad->title path can be exercised without an interactive session (debug only).
 static void kyty_pad_demo_tick()
@@ -467,10 +452,10 @@ static void kyty_pad_demo_tick()
 	}
 	static uint64_t flip = 0;
 	uint64_t        f    = flip++;
-	auto            btn  = [](uint32_t b, bool down) { Controller::ControllerButton(KEYBOARD_PAD_ID, b, down); };
+	auto            btn  = [](uint32_t b, bool down) { Controller::ControllerButton(PadFps::VIRTUAL_PAD_ID, b, down); };
 	switch (f)
 	{
-		case 20: ensure_kbd_pad_connected(); break;
+		case 20: PadFps::EnsureVirtualPadConnected(); break;
 		case 40: btn(Controller::PAD_BUTTON_CROSS, true); break;  // select START GAME
 		case 48: btn(Controller::PAD_BUTTON_CROSS, false); break;
 		case 70: btn(Controller::PAD_BUTTON_LEFT, true); break;   // slide tiles
@@ -526,6 +511,77 @@ static void kyty_mouse_demo_tick()
 	}
 }
 
+// KYTY_PAD_FPS_DEMO scripts an FPS-profile session (walk forward, sweep the
+// camera, dig) by pushing real SDL events on a flip-count schedule, so the
+// whole path - SDL event -> PadFps -> Controller -> scePadReadState -> title -
+// can be verified headless with frame dumps. Use with KYTY_PAD_FPS=1.
+static void kyty_pad_fps_demo_tick()
+{
+	static const bool enabled = (getenv("KYTY_PAD_FPS_DEMO") != nullptr);
+	if (!enabled)
+	{
+		return;
+	}
+
+	auto push_key = [](SDL_Keycode sym, SDL_Scancode scan, bool down)
+	{
+		SDL_Event ev {};
+		ev.type                = (down ? SDL_KEYDOWN : SDL_KEYUP);
+		ev.key.type            = ev.type;
+		ev.key.state           = (down ? SDL_PRESSED : SDL_RELEASED);
+		ev.key.keysym.sym      = sym;
+		ev.key.keysym.scancode = scan;
+		SDL_PushEvent(&ev);
+	};
+	auto push_button = [](uint8_t button, bool down)
+	{
+		SDL_Event ev {};
+		ev.type          = (down ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP);
+		ev.button.type   = ev.type;
+		ev.button.button = button;
+		ev.button.state  = (down ? SDL_PRESSED : SDL_RELEASED);
+		ev.button.clicks = 1;
+		SDL_PushEvent(&ev);
+	};
+	auto push_motion = [](int dx, int dy)
+	{
+		SDL_Event ev {};
+		ev.type        = SDL_MOUSEMOTION;
+		ev.motion.type = SDL_MOUSEMOTION;
+		ev.motion.xrel = dx;
+		ev.motion.yrel = dy;
+		SDL_PushEvent(&ev);
+	};
+
+	static uint64_t flip = 0;
+	uint64_t        f    = flip++;
+
+	if (f == 160)
+	{
+		push_key(SDLK_w, SDL_SCANCODE_W, true); // walk forward
+	}
+	if (f >= 170 && f < 210)
+	{
+		push_motion(25, 0); // sweep the camera right
+	}
+	if (f == 240)
+	{
+		push_key(SDLK_w, SDL_SCANCODE_W, false);
+	}
+	if (f >= 250 && f < 270)
+	{
+		push_motion(0, 15); // look down toward the ground
+	}
+	if (f == 280)
+	{
+		push_button(SDL_BUTTON_LEFT, true); // dig the block in view
+	}
+	if (f == 300)
+	{
+		push_button(SDL_BUTTON_LEFT, false);
+	}
+}
+
 void game_event_keyboard(GameApi* game, const EventKeyboard* key)
 {
 #ifdef KYTY_DBG_INPUT
@@ -538,6 +594,9 @@ void game_event_keyboard(GameApi* game, const EventKeyboard* key)
 
 	// Keyboard -> virtual DualShock: arrows = D-pad, Enter/X = cross, etc., so a
 	// title polling scePad is playable with no physical controller attached.
+	// The FPS profile (KYTY_PAD_FPS) gets first claim on keys it remaps
+	// (WASD/Space/E/T/Esc); everything else falls through to the legacy map.
+	if (!PadFps::HandleKey(key->key_code, key->down, key->repeat))
 	{
 		uint32_t pad_button = 0;
 		switch (key->key_code)
@@ -559,8 +618,8 @@ void game_event_keyboard(GameApi* game, const EventKeyboard* key)
 		}
 		if (pad_button != 0)
 		{
-			ensure_kbd_pad_connected();
-			Controller::ControllerButton(KEYBOARD_PAD_ID, pad_button, key->down);
+			PadFps::EnsureVirtualPadConnected();
+			Controller::ControllerButton(PadFps::VIRTUAL_PAD_ID, pad_button, key->down);
 		}
 	}
 
@@ -572,9 +631,9 @@ void game_event_keyboard(GameApi* game, const EventKeyboard* key)
 	}
 
 	// Escape-to-quit and Space-to-pause are emulator conveniences; suppress
-	// them once a title has opened the keyboard, so a game that uses those
-	// keys (e.g. Doom's menu / open-door) gets them instead
-	if (!Libs::Keyboard::KeyboardIsOpen())
+	// them once a title has opened the keyboard (e.g. Doom's menu / open-door)
+	// or when the FPS profile owns those keys (Esc = OPTIONS, Space = circle)
+	if (!Libs::Keyboard::KeyboardIsOpen() && !PadFps::Enabled())
 	{
 		if (key->down && key->key_code == SDLK_ESCAPE)
 		{
@@ -613,13 +672,28 @@ void game_event_mouse([[maybe_unused]] GameApi* game, [[maybe_unused]] const Eve
 	// mouse-driven titles are playable with a real device. A second emulated
 	// mouse (index 1) would need raw multi-pointer input, which SDL's single
 	// system pointer does not provide.
+	// The FPS profile (KYTY_PAD_FPS) claims motion, wheel and LMB/RMB instead
+	// (right-stick camera, trigger pulses, R1/L1); middle/X1/X2 still reach
+	// SceMouse, which pad-polling titles don't read.
 	if (mb->motion)
 	{
-		Mouse::InjectMotion(0, mb->motion_x, mb->motion_y);
+		if (PadFps::Enabled())
+		{
+			PadFps::HandleMouseMotion(mb->motion_x, mb->motion_y);
+		} else
+		{
+			Mouse::InjectMotion(0, mb->motion_x, mb->motion_y);
+		}
 	} else if (mb->wheel)
 	{
-		Mouse::InjectWheel(0, mb->y);
-	} else
+		if (PadFps::Enabled())
+		{
+			PadFps::HandleWheel(mb->y);
+		} else
+		{
+			Mouse::InjectWheel(0, mb->y);
+		}
+	} else if (!PadFps::HandleMouseButton(mb->left, mb->right, mb->down))
 	{
 		uint32_t button = 0;
 		if (mb->left)
@@ -2496,6 +2570,8 @@ void WindowDrawBuffer(VideoOutVulkanImage* image)
 
 	kyty_pad_demo_tick();
 	kyty_mouse_demo_tick();
+	kyty_pad_fps_demo_tick();
+	PadFps::FrameTick();
 
 	EXIT_IF(image == nullptr);
 	EXIT_IF(g_window_ctx == nullptr);
@@ -2529,18 +2605,42 @@ void WindowDrawBuffer(VideoOutVulkanImage* image)
 
 	auto* blt_src_image = image;
 
-	// One-shot base64 dump of the presented image (KYTY_DUMP_FRAME), decoded
-	// host-side. Reads the scanout image back to host memory.
+	// Base64 dump of the presented image (KYTY_DUMP_FRAME), decoded host-side.
+	// KYTY_DUMP_FRAME_AT is a flip number or a comma-separated list of flip
+	// numbers ("150,210,330"). Reads the scanout image back to host memory.
 	if (getenv("KYTY_DUMP_FRAME") != nullptr)
 	{
-		static int s_dump_n = 0;
-		static int s_dump_at = -1;
-		if (s_dump_at < 0)
+		static int         s_dump_n = 0;
+		static Vector<int> s_dump_at;
+		static bool        s_parsed = false;
+		if (!s_parsed)
 		{
+			s_parsed      = true;
 			const char* s = getenv("KYTY_DUMP_FRAME_AT");
-			s_dump_at     = (s != nullptr ? atoi(s) : 120);
+			if (s == nullptr)
+			{
+				s_dump_at.Add(120);
+			} else
+			{
+				for (const char* p = s; *p != '\0';)
+				{
+					s_dump_at.Add(atoi(p));
+					while (*p != '\0' && *p != ',')
+					{
+						p++;
+					}
+					if (*p == ',')
+					{
+						p++;
+					}
+				}
+				if (s_dump_at.IsEmpty())
+				{
+					s_dump_at.Add(0); // KYTY_DUMP_FRAME_AT="" kept its old atoi("")==0 meaning
+				}
+			}
 		}
-		if (s_dump_n++ == s_dump_at)
+		if (s_dump_at.Contains(s_dump_n++))
 		{
 			uint32_t w    = image->extent.width;
 			uint32_t h    = image->extent.height;
@@ -2561,7 +2661,7 @@ void WindowDrawBuffer(VideoOutVulkanImage* image)
 			}
 			int               ow    = static_cast<int>(w) / step;
 			int               oh    = static_cast<int>(h) / step;
-			Kyty::printf("KFRAME_BEGIN %d %d\n", ow, oh);
+			Kyty::printf("KFRAME_BEGIN %d %d flip=%d\n", ow, oh, s_dump_n - 1);
 			uint8_t line[57 * 3];
 			char    out[57 * 4 + 1];
 			int     col = 0;
