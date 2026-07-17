@@ -965,6 +965,7 @@ LIB_DEFINE(InitLibKernel_1_FS)
 	LIB_FUNC("AqBioC2vF3I", Posix::read);
 	LIB_FUNC("FN4gaPmuFV8", Posix::write);
 	LIB_FUNC("j2AIqSqJP0w", FileSystem::KernelGetdents);
+	LIB_FUNC("2G6i6hMIUUY", FileSystem::KernelGetdents); // posix getdents (imported from libkernel, like stat)
 	LIB_FUNC("1-LFLmRFxxM", FileSystem::KernelMkdir);
 	LIB_FUNC("mqQMh1zPPT8", Posix::fstat);
 	LIB_FUNC("JGMio+21L4c", Posix::mkdir);

@@ -13,6 +13,7 @@
 #include "SDL_system.h"
 
 #include <cerrno>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <utime.h>
@@ -645,9 +646,45 @@ void sys_file_find_files(const String& /*path*/, Vector<sys_file_find_t>& /*out*
 	EXIT("not implemented\n");
 }
 
-void sys_file_get_dents(const String& /*path*/, Kyty::Vector<sys_dir_entry_t>& /*out*/)
+void sys_file_get_dents(const String& path, Kyty::Vector<sys_dir_entry_t>& out)
 {
-	EXIT("not implemented\n");
+	String real_path = path;
+	if (!real_path.EndsWith(U"/"))
+	{
+		real_path += U"/";
+	}
+
+	DIR* dir = opendir(real_path.C_Str());
+	if (dir == nullptr)
+	{
+		return;
+	}
+
+	for (;;)
+	{
+		struct dirent* entry = readdir(dir);
+		if (entry == nullptr)
+		{
+			break;
+		}
+
+		sys_dir_entry_t r {};
+		r.name = String::FromUtf8(entry->d_name);
+
+		if (entry->d_type == DT_UNKNOWN || entry->d_type == DT_LNK)
+		{
+			struct stat st {};
+			String      full = real_path + r.name;
+			r.is_file        = (stat(full.C_Str(), &st) == 0 && S_ISDIR(st.st_mode)) ? false : true;
+		} else
+		{
+			r.is_file = (entry->d_type != DT_DIR);
+		}
+
+		out.Add(r);
+	}
+
+	closedir(dir);
 }
 
 bool sys_file_copy_file(const String& /*src*/, const String& /*dst*/)

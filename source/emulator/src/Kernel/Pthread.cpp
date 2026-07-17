@@ -1976,41 +1976,47 @@ int KYTY_SYSV_ABI PthreadCreate(Pthread* thread, const PthreadAttr* attr, pthrea
 
 	PRINT_NAME_ENABLE(false);
 
-	*thread = pthread_pool->Create();
+	// Snapshot the pool object BEFORE launching: `thread` points into guest
+	// memory, and a fast-exiting thread may Mem_Free/overwrite that storage
+	// (self-detach at end of entry) while we're still here - dereferencing
+	// `*thread` after pthread_create reads freed heap. Pool objects are never
+	// deleted, so `created` stays dereferenceable.
+	*thread       = pthread_pool->Create();
+	auto* created = *thread;
 
-	if ((*thread)->attr != nullptr)
+	if (created->attr != nullptr)
 	{
-		PthreadAttrDestroy(&(*thread)->attr);
+		PthreadAttrDestroy(&created->attr);
 	}
 
-	PthreadAttrInit(&(*thread)->attr);
+	PthreadAttrInit(&created->attr);
 
-	int result = pthread_attr_copy(&(*thread)->attr, attr);
+	int result = pthread_attr_copy(&created->attr, attr);
 
 	if (result == 0)
 	{
-		EXIT_IF((*thread)->free);
+		EXIT_IF(created->free);
 
-		(*thread)->name        = name;
-		(*thread)->entry       = entry;
-		(*thread)->arg         = arg;
-		(*thread)->almost_done = false;
-		(*thread)->detached    = (*attr)->detached;
-		(*thread)->started     = false;
-		(*thread)->unique_id   = -1;
+		created->name        = name;
+		created->entry       = entry;
+		created->arg         = arg;
+		created->almost_done = false;
+		created->detached    = (*attr)->detached;
+		created->started     = false;
+		created->unique_id   = -1;
 
-		result = pthread_create(&(*thread)->p, &(*attr)->p, run_thread, *thread);
+		result = pthread_create(&created->p, &(*attr)->p, run_thread, created);
 	}
 
 	if (result == 0)
 	{
-		while (!(*thread)->started)
+		while (!created->started)
 		{
 			Core::Thread::SleepMicro(1000);
 		}
 	}
 
-	printf("\tthread create: %s, id = %d, %d\n", (*thread)->name.C_Str(), (*thread)->unique_id, result);
+	printf("\tthread create: %s, id = %d, %d\n", created->name.C_Str(), created->unique_id, result);
 
 	pthread_attr_dbg_print(attr);
 

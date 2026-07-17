@@ -349,6 +349,78 @@ uint32_t Audio::AudioOutOutputs(OutputParam* params, uint32_t num)
 	return first_port.samples_num;
 }
 
+// KYTY_DUMP_AUDIO=<prefix>: append every queued PCM block to
+// <prefix>.dev<N>.raw and log an occasional summary line - headless evidence
+// that samples reached the host device (the audio analog of KYTY_DUMP_FRAME).
+static void dump_audio_block(uint32_t device, int channels, uint32_t freq, const void* data, uint32_t bytes)
+{
+	static const char* prefix = getenv("KYTY_DUMP_AUDIO");
+	if (prefix == nullptr)
+	{
+		return;
+	}
+
+	struct Slot
+	{
+		FILE*    file    = nullptr;
+		uint32_t dev     = 0;
+		uint64_t blocks  = 0;
+		uint64_t nonzero = 0;
+	};
+	static Core::Mutex mutex;
+	static Slot        slots[8];
+
+	Core::LockGuard lock(mutex);
+
+	Slot* slot = nullptr;
+	for (auto& s: slots)
+	{
+		if (s.file != nullptr && s.dev == device)
+		{
+			slot = &s;
+			break;
+		}
+		if (s.file == nullptr)
+		{
+			char name[512];
+			snprintf(name, sizeof(name), "%s.dev%u.raw", prefix, device);
+			s.file = fopen(name, "wb");
+			s.dev  = device;
+			slot   = &s;
+			break;
+		}
+	}
+	if (slot == nullptr || slot->file == nullptr)
+	{
+		return;
+	}
+
+	fwrite(data, 1, bytes, slot->file);
+
+	const auto* p        = static_cast<const uint8_t*>(data);
+	bool        has_data = false;
+	for (uint32_t i = 0; i < bytes; i++)
+	{
+		if (p[i] != 0)
+		{
+			has_data = true;
+			break;
+		}
+	}
+
+	slot->blocks++;
+	if (has_data)
+	{
+		slot->nonzero++;
+	}
+	if (slot->blocks == 1 || slot->blocks % 200 == 0)
+	{
+		fflush(slot->file);
+		Kyty::printf("KAUDIO dev=%u freq=%u ch=%d blocks=%" PRIu64 " nonzero=%" PRIu64 "\n", device, freq, channels, slot->blocks,
+		             slot->nonzero);
+	}
+}
+
 void Audio::QueueBlock(const PortOut& port, const void* data)
 {
 	uint32_t bytes = port.BlockBytes();
@@ -361,6 +433,7 @@ void Audio::QueueBlock(const PortOut& port, const void* data)
 
 	if (full_volume)
 	{
+		dump_audio_block(port.device, port.channels_num, port.freq, data, bytes);
 		SDL_QueueAudio(port.device, data, bytes);
 		return;
 	}
@@ -398,6 +471,7 @@ void Audio::QueueBlock(const PortOut& port, const void* data)
 		}
 	}
 
+	dump_audio_block(port.device, port.channels_num, port.freq, scaled.GetDataConst(), bytes);
 	SDL_QueueAudio(port.device, scaled.GetDataConst(), bytes);
 }
 
