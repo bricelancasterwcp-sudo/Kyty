@@ -11,19 +11,31 @@
 #include "Emulator/Libs/Errno.h"
 #include "Emulator/Libs/Libs.h"
 
+#include <algorithm>
 #include <arpa/inet.h>
 #include <atomic>
+#include <cctype>
 #include <cerrno>
+#include <cstring>
+#include <curl/curl.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <string>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <vector>
 
 #ifdef KYTY_EMU_ENABLED
 
 namespace Kyty::Libs::Network {
+
+// SCE_HTTP_CONTENTLEN_* result values for sceHttpGetResponseContentLength
+// (ORBIS_HTTP_CONTENTLEN_* in OpenOrbis orbis/_types/http.h)
+constexpr int HTTP_CONTENTLEN_EXIST     = 0;
+constexpr int HTTP_CONTENTLEN_NOT_FOUND = 1;
+constexpr int HTTP_CONTENTLEN_CHUNK_ENC = 2;
 
 class Network
 {
@@ -114,6 +126,13 @@ public:
 	bool HttpSetAutoRedirect(Id id, int enable);
 	bool HttpSetAuthEnabled(Id id, int enable);
 
+	// These return an SCE error code (OK on success) rather than bool: the
+	// transport has more than one failure mode the guest distinguishes.
+	int HttpSendRequest(Id req_id, const void* post_data, size_t post_size);
+	int HttpGetStatusCode(Id req_id, int* status_code);
+	int HttpGetResponseContentLength(Id req_id, int* result, uint64_t* content_length);
+	int HttpReadData(Id req_id, void* data, size_t size);
+
 private:
 	struct Pool
 	{
@@ -182,6 +201,13 @@ private:
 		String   method;
 		String   url;
 		uint64_t content_length = 0;
+		// Response state, filled by HttpSendRequest()
+		Core::ByteBuffer body;
+		uint64_t         read_pos             = 0;
+		uint64_t         response_length      = 0;
+		int              response_length_type = HTTP_CONTENTLEN_NOT_FOUND;
+		int              status_code          = 0;
+		bool             performed            = false;
 	};
 
 	static constexpr int POOLS_MAX = 32;
@@ -204,6 +230,9 @@ KYTY_SUBSYSTEM_INIT(Network)
 	EXIT_IF(g_net != nullptr);
 
 	g_net = new Network;
+
+	// Not thread-safe; must happen here, before any guest thread can reach the Http HLE
+	curl_global_init(CURL_GLOBAL_DEFAULT);
 }
 
 KYTY_SUBSYSTEM_UNEXPECTED_SHUTDOWN(Network) {}
@@ -485,6 +514,380 @@ bool Network::HttpDeleteTemplate(Id tmpl_id)
 	}
 
 	return false;
+}
+
+// Host-side transport for the SceHttp HLE: each sceHttpSendRequest is one
+// synchronous libcurl transfer, buffered in full on the HttpRequest object.
+namespace HttpTransfer {
+
+struct Config
+{
+	std::string              url;
+	std::string              method;
+	std::string              user_agent;
+	std::vector<std::string> headers;
+	std::vector<uint8_t>     post_body;
+	int                      http_ver             = 0;
+	bool                     follow_redirect      = true;
+	bool                     skip_verify          = false;
+	uint32_t                 connect_timeout_usec = 0;
+	uint32_t                 recv_timeout_usec    = 0;
+};
+
+struct Result
+{
+	long                 status         = 0;
+	int64_t              content_length = -1;
+	bool                 chunked        = false;
+	std::vector<uint8_t> body;
+};
+
+static size_t WriteCb(char* ptr, size_t size, size_t nmemb, void* userdata)
+{
+	auto*  body = static_cast<std::vector<uint8_t>*>(userdata);
+	size_t n    = size * nmemb;
+	body->insert(body->end(), ptr, ptr + n);
+	return n;
+}
+
+static size_t HeaderCb(char* ptr, size_t size, size_t nmemb, void* userdata)
+{
+	auto*       chunked = static_cast<bool*>(userdata);
+	size_t      n       = size * nmemb;
+	std::string line(ptr, n);
+	for (auto& c: line)
+	{
+		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	}
+	if (line.rfind("http/", 0) == 0)
+	{
+		// a new response starts (e.g. after a redirect) - only the final one counts
+		*chunked = false;
+	}
+	if (line.find("transfer-encoding:") != std::string::npos && line.find("chunked") != std::string::npos)
+	{
+		*chunked = true;
+	}
+	return n;
+}
+
+static int MapError(CURLcode code)
+{
+	switch (code)
+	{
+		case CURLE_OPERATION_TIMEDOUT: return HTTP_ERROR_TIMEOUT;
+		case CURLE_UNSUPPORTED_PROTOCOL: return HTTP_ERROR_UNKNOWN_SCHEME;
+		case CURLE_URL_MALFORMAT: return HTTP_ERROR_INVALID_URL;
+		case CURLE_SSL_CONNECT_ERROR:
+		case CURLE_PEER_FAILED_VERIFICATION:
+		case CURLE_SSL_CERTPROBLEM:
+		case CURLE_SSL_CIPHER:
+		case CURLE_SSL_ISSUER_ERROR: return HTTP_ERROR_SSL;
+		default: return HTTP_ERROR_NETWORK;
+	}
+}
+
+static int Perform(const Config& cfg, Result* out)
+{
+	CURL* curl = curl_easy_init();
+	if (curl == nullptr)
+	{
+		return HTTP_ERROR_OUT_OF_MEMORY;
+	}
+
+	curl_slist* header_list = nullptr;
+	for (const auto& h: cfg.headers)
+	{
+		header_list = curl_slist_append(header_list, h.c_str());
+	}
+
+	char errbuf[CURL_ERROR_SIZE] = {};
+
+	curl_easy_setopt(curl, CURLOPT_URL, cfg.url.c_str());
+	curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errbuf);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &out->body);
+	curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCb);
+	curl_easy_setopt(curl, CURLOPT_HEADERDATA, &out->chunked);
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, cfg.follow_redirect ? 1L : 0L);
+
+	if (!cfg.user_agent.empty())
+	{
+		curl_easy_setopt(curl, CURLOPT_USERAGENT, cfg.user_agent.c_str());
+	}
+	if (header_list != nullptr)
+	{
+		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
+	}
+	if (cfg.http_ver == 1)
+	{
+		curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_0);
+	} else if (cfg.http_ver == 2)
+	{
+		curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+	}
+	if (cfg.connect_timeout_usec != 0)
+	{
+		// sub-millisecond values must not truncate to 0 (curl reads 0 as "default")
+		curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, std::max<long>(1, static_cast<long>(cfg.connect_timeout_usec / 1000)));
+	}
+	if (cfg.recv_timeout_usec != 0)
+	{
+		// Sony's recv timeout limits a stalled read, not the whole transfer
+		curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+		curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, std::max<long>(1, static_cast<long>(cfg.recv_timeout_usec / 1000000)));
+	}
+	if (cfg.skip_verify)
+	{
+		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+	}
+	if (cfg.method == "POST")
+	{
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(cfg.post_body.size()));
+		curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS,
+		                 cfg.post_body.empty() ? "" : reinterpret_cast<const char*>(cfg.post_body.data()));
+	} else if (cfg.method == "HEAD")
+	{
+		curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+	} else if (!cfg.method.empty() && cfg.method != "GET")
+	{
+		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, cfg.method.c_str());
+	}
+
+	CURLcode rc = curl_easy_perform(curl);
+
+	if (rc == CURLE_OK)
+	{
+		long status = 0;
+		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+		out->status = status;
+
+		curl_off_t len = -1;
+		curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &len);
+		out->content_length = static_cast<int64_t>(len);
+	} else
+	{
+		printf("\t curl: %s (%s)\n", curl_easy_strerror(rc), errbuf);
+	}
+
+	curl_slist_free_all(header_list);
+	curl_easy_cleanup(curl);
+
+	return (rc == CURLE_OK ? OK : MapError(rc));
+}
+
+} // namespace HttpTransfer
+
+int Network::HttpSendRequest(Id req_id, const void* post_data, size_t post_size)
+{
+	HttpTransfer::Config cfg;
+	HttpsCallback        cbfunc      = nullptr;
+	void*                cb_user_arg = nullptr;
+	int                  cb_ssl_id   = 0;
+
+	{
+		Core::LockGuard lock(m_mutex);
+
+		if (!HttpValidRequest(req_id))
+		{
+			return HTTP_ERROR_INVALID_ID;
+		}
+
+		const auto& r = m_requests.At(req_id.GetId());
+
+		cfg.url                  = r.url.C_Str();
+		cfg.method               = r.method.C_Str();
+		cfg.user_agent           = r.user_agent.C_Str();
+		cfg.http_ver             = r.http_ver;
+		cfg.follow_redirect      = r.auto_redirect;
+		cfg.connect_timeout_usec = r.connect_timeout;
+		cfg.recv_timeout_usec    = r.recv_timeout;
+
+		for (const auto& h: r.headers)
+		{
+			cfg.headers.emplace_back(std::string(h.name.C_Str()) + ": " + h.value.C_Str());
+		}
+
+		if (post_data != nullptr && post_size > 0)
+		{
+			const auto* p = static_cast<const uint8_t*>(post_data);
+			cfg.post_body.assign(p, p + post_size);
+		}
+
+		if (r.nonblock)
+		{
+			printf("\t nonblock is not supported - performing synchronously\n");
+		}
+
+		cbfunc      = r.ssl_cbfunc;
+		cb_user_arg = r.ssl_user_arg;
+		if (r.http_ctx_id >= 0 && r.http_ctx_id < HTTP_MAX)
+		{
+			cb_ssl_id = Id::Create(m_http[r.http_ctx_id].ssl_ctx_id, Id::Type::Ssl).ToInt();
+		}
+	}
+
+	bool is_https = (cfg.url.rfind("https", 0) == 0 || cfg.url.rfind("HTTPS", 0) == 0);
+
+	HttpTransfer::Result res;
+
+	int result = HttpTransfer::Perform(cfg, &res);
+
+	// Sony consults the guest's SSL callback during the TLS handshake; libcurl
+	// exposes neither that hook nor the cert chain, so the callback gets an empty
+	// cert list (certNum = 0) and a coarse verifyErr. A negative return rejects.
+	// Verification stays ON by default; it is bypassed only when it actually
+	// failed AND the guest's callback explicitly accepted the peer.
+	if (is_https && cbfunc != nullptr)
+	{
+		if (result == HTTP_ERROR_SSL)
+		{
+			int cb_ret = cbfunc(cb_ssl_id, 0x02 /* generic verify-failure bit */, nullptr, 0, cb_user_arg);
+			if (cb_ret < 0)
+			{
+				return HTTP_ERROR_SSL;
+			}
+
+			cfg.skip_verify = true;
+			res             = HttpTransfer::Result();
+			result          = HttpTransfer::Perform(cfg, &res);
+		} else if (result == OK)
+		{
+			int cb_ret = cbfunc(cb_ssl_id, 0, nullptr, 0, cb_user_arg);
+			if (cb_ret < 0)
+			{
+				return HTTP_ERROR_SSL;
+			}
+		}
+	}
+
+	if (result != OK)
+	{
+		return result;
+	}
+
+	if (res.body.size() > UINT32_MAX)
+	{
+		return HTTP_ERROR_OUT_OF_MEMORY;
+	}
+
+	Core::LockGuard lock(m_mutex);
+
+	if (!HttpValidRequest(req_id))
+	{
+		// deleted while the transfer was in flight
+		return HTTP_ERROR_INVALID_ID;
+	}
+
+	auto& r = m_requests[req_id.GetId()];
+
+	r.performed   = true;
+	r.status_code = static_cast<int>(res.status);
+	r.read_pos    = 0;
+	if (res.content_length >= 0)
+	{
+		r.response_length_type = HTTP_CONTENTLEN_EXIST;
+		r.response_length      = static_cast<uint64_t>(res.content_length);
+	} else
+	{
+		r.response_length_type = (res.chunked ? HTTP_CONTENTLEN_CHUNK_ENC : HTTP_CONTENTLEN_NOT_FOUND);
+		r.response_length      = 0;
+	}
+	r.body = (res.body.empty() ? Core::ByteBuffer() : Core::ByteBuffer(res.body.data(), static_cast<uint32_t>(res.body.size())));
+
+	printf("\t http status = %d, body = %u bytes\n", r.status_code, r.body.Size());
+
+	return OK;
+}
+
+int Network::HttpGetStatusCode(Id req_id, int* status_code)
+{
+	Core::LockGuard lock(m_mutex);
+
+	if (!HttpValidRequest(req_id))
+	{
+		return HTTP_ERROR_INVALID_ID;
+	}
+	if (status_code == nullptr)
+	{
+		return HTTP_ERROR_INVALID_VALUE;
+	}
+
+	const auto& r = m_requests.At(req_id.GetId());
+
+	if (!r.performed)
+	{
+		return HTTP_ERROR_BEFORE_SEND;
+	}
+
+	*status_code = r.status_code;
+
+	return OK;
+}
+
+int Network::HttpGetResponseContentLength(Id req_id, int* result, uint64_t* content_length)
+{
+	Core::LockGuard lock(m_mutex);
+
+	if (!HttpValidRequest(req_id))
+	{
+		return HTTP_ERROR_INVALID_ID;
+	}
+	if (result == nullptr || content_length == nullptr)
+	{
+		return HTTP_ERROR_INVALID_VALUE;
+	}
+
+	const auto& r = m_requests.At(req_id.GetId());
+
+	if (!r.performed)
+	{
+		return HTTP_ERROR_BEFORE_SEND;
+	}
+
+	*result         = r.response_length_type;
+	*content_length = r.response_length;
+
+	return OK;
+}
+
+int Network::HttpReadData(Id req_id, void* data, size_t size)
+{
+	Core::LockGuard lock(m_mutex);
+
+	if (!HttpValidRequest(req_id))
+	{
+		return HTTP_ERROR_INVALID_ID;
+	}
+	if (data == nullptr)
+	{
+		return HTTP_ERROR_INVALID_VALUE;
+	}
+
+	auto& r = m_requests[req_id.GetId()];
+
+	if (!r.performed)
+	{
+		return HTTP_ERROR_BEFORE_SEND;
+	}
+	if (std::strcmp(r.method.C_Str(), "HEAD") == 0)
+	{
+		return HTTP_ERROR_READ_BY_HEAD_METHOD;
+	}
+
+	uint64_t body_size = r.body.Size();
+	uint64_t avail     = (r.read_pos < body_size ? body_size - r.read_pos : 0);
+	uint64_t n         = std::min<uint64_t>(std::min<uint64_t>(avail, size), INT32_MAX);
+
+	if (n > 0)
+	{
+		std::memcpy(data, r.body.GetDataConst() + r.read_pos, n);
+		r.read_pos += n;
+	}
+
+	return static_cast<int>(n);
 }
 
 bool Network::HttpSetNonblock(Id id, bool enable)
@@ -1695,13 +2098,16 @@ int KYTY_SYSV_ABI HttpUnsetEpoll(int id)
 	return OK;
 }
 
-int KYTY_SYSV_ABI HttpSendRequest(int request_id, const void* /*post_data*/, size_t /*size*/)
+int KYTY_SYSV_ABI HttpSendRequest(int request_id, const void* post_data, size_t size)
 {
 	PRINT_NAME();
 
 	printf("\t request_id = %d\n", request_id);
+	printf("\t post_size  = %" PRIu64 "\n", static_cast<uint64_t>(size));
 
-	return HTTP_ERROR_TIMEOUT;
+	EXIT_IF(g_net == nullptr);
+
+	return g_net->HttpSendRequest(Network::Id(request_id), post_data, size);
 }
 
 int KYTY_SYSV_ABI HttpCreateConnectionWithURL(int tmpl_id, const char* url, int enable_keep_alive)
@@ -1761,6 +2167,35 @@ int KYTY_SYSV_ABI HttpCreateRequestWithURL2(int conn_id, const char* method, con
 	return id.ToInt();
 }
 
+int KYTY_SYSV_ABI HttpCreateRequestWithURL(int conn_id, int method, const char* url, uint64_t content_length)
+{
+	PRINT_NAME();
+
+	// SCE_HTTP_METHOD_* ordering (ORBIS_METHOD_* in OpenOrbis)
+	static const char* method_names[] = {"GET", "POST", "HEAD", "OPTIONS", "PUT", "DELETE", "TRACE"};
+
+	printf("\t conn_id        = %d\n", conn_id);
+	printf("\t method         = %d\n", method);
+	printf("\t url            = %s\n", url);
+	printf("\t content_length = %" PRIu64 "\n", content_length);
+
+	EXIT_IF(g_net == nullptr);
+
+	if (method < 0 || method >= static_cast<int>(sizeof(method_names) / sizeof(method_names[0])))
+	{
+		return HTTP_ERROR_UNKNOWN_METHOD;
+	}
+
+	auto id = g_net->HttpCreateRequestWithURL2(Network::Id(conn_id), method_names[method], url, content_length);
+
+	if (!id.IsValid())
+	{
+		return HTTP_ERROR_OUT_OF_MEMORY;
+	}
+
+	return id.ToInt();
+}
+
 int KYTY_SYSV_ABI HttpDeleteRequest(int req_id)
 {
 	PRINT_NAME();
@@ -1775,6 +2210,53 @@ int KYTY_SYSV_ABI HttpDeleteRequest(int req_id)
 	}
 
 	return OK;
+}
+
+int KYTY_SYSV_ABI HttpGetStatusCode(int req_id, int* status_code)
+{
+	PRINT_NAME();
+
+	printf("\t req_id = %d\n", req_id);
+
+	EXIT_IF(g_net == nullptr);
+
+	int result = g_net->HttpGetStatusCode(Network::Id(req_id), status_code);
+
+	if (result == OK)
+	{
+		printf("\t status = %d\n", *status_code);
+	}
+
+	return result;
+}
+
+int KYTY_SYSV_ABI HttpGetResponseContentLength(int req_id, int* result, uint64_t* content_length)
+{
+	PRINT_NAME();
+
+	printf("\t req_id = %d\n", req_id);
+
+	EXIT_IF(g_net == nullptr);
+
+	int ret = g_net->HttpGetResponseContentLength(Network::Id(req_id), result, content_length);
+
+	if (ret == OK)
+	{
+		printf("\t type = %d, content_length = %" PRIu64 "\n", *result, *content_length);
+	}
+
+	return ret;
+}
+
+int KYTY_SYSV_ABI HttpReadData(int req_id, void* data, size_t size)
+{
+	PRINT_NAME();
+
+	printf("\t req_id = %d, size = %" PRIu64 "\n", req_id, static_cast<uint64_t>(size));
+
+	EXIT_IF(g_net == nullptr);
+
+	return g_net->HttpReadData(Network::Id(req_id), data, size);
 }
 
 } // namespace Http

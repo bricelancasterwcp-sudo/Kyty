@@ -32,6 +32,15 @@ static KYTY_SYSV_ABI int SysmoduleUnloadModule(uint16_t id)
 	return 0;
 }
 
+static KYTY_SYSV_ABI int SysmoduleLoadModuleInternal(uint32_t id)
+{
+	PRINT_NAME();
+
+	printf("\t id = 0x%08" PRIx32 "\n", id);
+
+	return 0;
+}
+
 static KYTY_SYSV_ABI int SysmoduleLoadModuleInternalWithArg(uint16_t id, int arg1, int arg2, int arg3, int* ret)
 {
 	PRINT_NAME();
@@ -63,6 +72,7 @@ LIB_DEFINE(InitSysmodule_1)
 {
 	LIB_FUNC("eR2bZFAAU0Q", Sysmodule::SysmoduleUnloadModule);
 	LIB_FUNC("hHrGoGoNf+s", Sysmodule::SysmoduleLoadModuleInternalWithArg);
+	LIB_FUNC("39iV5E1HoCk", Sysmodule::SysmoduleLoadModuleInternal);
 	LIB_FUNC("g8cM39EUZ6o", Sysmodule::SysmoduleLoadModule);
 	LIB_FUNC("fMP5NHUOaMk", Sysmodule::SysmoduleIsLoaded);
 }

@@ -48,6 +48,11 @@ int KYTY_SYSV_ABI NetPoolCreate(const char* name, int size, int flags)
 	return NET_CALL(Net::NetPoolCreate(name, size, flags));
 }
 
+int KYTY_SYSV_ABI NetPoolDestroy(int memid)
+{
+	return NET_CALL(Net::NetPoolDestroy(memid));
+}
+
 int KYTY_SYSV_ABI NetInetPton(int af, const char* src, void* dst)
 {
 	return NET_CALL(Net::NetInetPton(af, src, dst));
@@ -145,6 +150,7 @@ LIB_DEFINE(InitNet_1_Net)
 {
 	LIB_FUNC("Nlev7Lg8k3A", LibNet::NetInit);
 	LIB_FUNC("dgJBaeJnGpo", LibNet::NetPoolCreate);
+	LIB_FUNC("K7RlrTkI-mw", LibNet::NetPoolDestroy);
 	LIB_FUNC("8Kcp5d-q1Uo", LibNet::NetInetPton);
 	LIB_FUNC("v6M4txecCuo", LibNet::NetEtherNtostr);
 	LIB_FUNC("6Oc0bLsIYe0", LibNet::NetGetMacAddress);
@@ -182,6 +188,7 @@ namespace Ssl = Network::Ssl;
 LIB_DEFINE(InitNet_1_Ssl)
 {
 	LIB_FUNC("hdpVEUDFW3s", Ssl::SslInit);
+	LIB_FUNC("0K1yQ6Lv-Yc", Ssl::SslTerm);
 }
 
 } // namespace LibSsl
@@ -195,6 +202,7 @@ namespace Http = Network::Http;
 LIB_DEFINE(InitNet_1_Http)
 {
 	LIB_FUNC("A9cVMUtEp4Y", Http::HttpInit);
+	LIB_FUNC("Ik-KpLTlf7Q", Http::HttpTerm);
 	LIB_FUNC("0gYjPTR-6cY", Http::HttpCreateTemplate);
 	LIB_FUNC("4I8vEpuEhZ8", Http::HttpDeleteTemplate);
 	LIB_FUNC("s2-NPIvz+iA", Http::HttpSetNonblock);
@@ -207,9 +215,13 @@ LIB_DEFINE(InitNet_1_Http)
 	LIB_FUNC("qgxDBjorUxs", Http::HttpCreateConnectionWithURL);
 	LIB_FUNC("P6A3ytpsiYc", Http::HttpDeleteConnection);
 	LIB_FUNC("Cnp77podkCU", Http::HttpCreateRequestWithURL2);
+	LIB_FUNC("Aeu5wVKkF9w", Http::HttpCreateRequestWithURL);
 	LIB_FUNC("qe7oZ+v4PWA", Http::HttpDeleteRequest);
 	LIB_FUNC("EY28T2bkN7k", Http::HttpAddRequestHeader);
 	LIB_FUNC("1e2BNwI-XzE", Http::HttpSendRequest);
+	LIB_FUNC("0a2TBNfE3BU", Http::HttpGetStatusCode);
+	LIB_FUNC("yuO2H2Uvnos", Http::HttpGetResponseContentLength);
+	LIB_FUNC("P5pdoykPYTk", Http::HttpReadData);
 	LIB_FUNC("Tc-hAYDKtQc", Http::HttpSetResolveTimeOut);
 	LIB_FUNC("K1d1LqZRQHQ", Http::HttpSetResolveRetry);
 	LIB_FUNC("0S9tTH0uqTU", Http::HttpSetConnectTimeOut);

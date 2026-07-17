@@ -23,6 +23,10 @@ target_link_libraries(emulator core math scripts lua unit_test vulkan-1 spirv-to
 find_package(Freetype REQUIRED)
 target_link_libraries(emulator ${FREETYPE_LIBRARIES})
 
+# Host libcurl, transport for the SceHttp HLE (see Network.cpp)
+find_package(CURL REQUIRED)
+target_link_libraries(emulator CURL::libcurl)
+
 target_include_directories(emulator PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 get_property(inc_headers TARGET emulator PROPERTY INCLUDE_DIRECTORIES)
