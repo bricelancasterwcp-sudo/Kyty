@@ -989,6 +989,10 @@ LIB_DEFINE(InitLibKernel_1_Mem)
 	LIB_FUNC("vSMAm3cxYTY", Memory::KernelMprotect);
 	LIB_FUNC("BPE9s9vQQXo", Posix::mmap);
 	LIB_FUNC("UqDGjXA5yUM", Posix::munmap);
+	// OpenOrbis homebrew (e.g. ClassiCube) imports POSIX stat from the "libkernel"
+	// library, not "Posix"; register it here too (mirrors mmap/munmap above), else
+	// File_Exists()'s stat() call resolves to nothing and aborts.
+	LIB_FUNC("E6ao34wPw+U", Posix::stat);
 }
 
 LIB_DEFINE(InitLibKernel_1_Equeue)
