@@ -654,6 +654,32 @@ static KYTY_SYSV_ABI int elf_phdr_match_addr(ModuleInfo* m, uint64_t dtor_vaddr)
 	return result;
 }
 
+int KYTY_SYSV_ABI KernelSendNotificationRequest(int device, const void* req, size_t size, int blocking)
+{
+	PRINT_NAME();
+
+	if (req == nullptr)
+	{
+		return KERNEL_ERROR_EINVAL;
+	}
+
+	// OrbisNotificationRequest: 11 x int32 header + useIconImageUri byte, then
+	// message[1024] at offset 45 (OpenOrbis layout). Echo the message, bounded
+	// by the caller-declared size so a short request can't over-read.
+	constexpr size_t MESSAGE_OFFSET = 45;
+	if (size > MESSAGE_OFFSET)
+	{
+		const char* msg     = static_cast<const char*>(req) + MESSAGE_OFFSET;
+		size_t      max_len = size - MESSAGE_OFFSET;
+		printf("[guest notify] %.*s\n", static_cast<int>(max_len > 1024 ? 1024 : max_len), msg);
+	}
+
+	(void)device;
+	(void)blocking;
+
+	return OK;
+}
+
 int KYTY_SYSV_ABI KernelUuidCreate(uint32_t* uuid)
 {
 	PRINT_NAME();
@@ -1204,6 +1230,7 @@ LIB_DEFINE(InitLibKernel_1)
 	LIB_FUNC("wzvqT4UqKX8", LibKernel::KernelLoadStartModule);
 	LIB_FUNC("LwG8g3niqwA", LibKernel::KernelDlsym);
 	LIB_FUNC("Xjoosiw+XPI", LibKernel::KernelUuidCreate);
+	LIB_FUNC("zl7hupSO0C0", LibKernel::KernelSendNotificationRequest);
 	LIB_FUNC("zE-wXIZjLoM", LibKernel::KernelDebugRaiseExceptionOnReleaseMode);
 }
 

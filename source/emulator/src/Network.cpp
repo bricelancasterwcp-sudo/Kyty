@@ -2213,6 +2213,22 @@ int KYTY_SYSV_ABI NpTrophyDestroyHandle(int handle)
 	return OK;
 }
 
+int KYTY_SYSV_ABI NpTrophyUnlockTrophy(int context, int handle, int trophy_id, int* platinum_id)
+{
+	PRINT_NAME();
+
+	EXIT_NOT_IMPLEMENTED(platinum_id == nullptr);
+	EXIT_NOT_IMPLEMENTED(context != 1);
+	EXIT_NOT_IMPLEMENTED(handle != 1);
+
+	printf("\t TROPHY UNLOCKED: id = %d\n", trophy_id);
+
+	// this unlock never completes a platinum
+	*platinum_id = -1; // SCE_NP_TROPHY_INVALID_TROPHY_ID
+
+	return OK;
+}
+
 int KYTY_SYSV_ABI NpTrophyGetTrophyUnlockState(int context, int handle, NpTrophyFlagArray* flags, uint32_t* count)
 {
 	PRINT_NAME();

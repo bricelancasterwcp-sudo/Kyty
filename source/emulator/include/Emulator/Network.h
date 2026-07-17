@@ -145,6 +145,7 @@ int KYTY_SYSV_ABI NpTrophyCreateHandle(int* handle);
 int KYTY_SYSV_ABI NpTrophyCreateContext(int* context, int user_id, uint32_t service_label, uint64_t options);
 int KYTY_SYSV_ABI NpTrophyRegisterContext(int context, int handle, uint64_t options);
 int KYTY_SYSV_ABI NpTrophyDestroyHandle(int handle);
+int KYTY_SYSV_ABI NpTrophyUnlockTrophy(int context, int handle, int trophy_id, int* platinum_id);
 int KYTY_SYSV_ABI NpTrophyGetTrophyUnlockState(int context, int handle, NpTrophyFlagArray* flags, uint32_t* count);
 
 } // namespace NpTrophy
