@@ -24,6 +24,21 @@ int KYTY_SYSV_ABI NetInetPton(int af, const char* src, void* dst);
 int KYTY_SYSV_ABI NetEtherNtostr(const NetEtherAddr* n, char* str, size_t len);
 int KYTY_SYSV_ABI NetGetMacAddress(NetEtherAddr* addr, int flags);
 
+// BSD-socket bridge to host sockets (IPv4/TCP+UDP). Ids are host fds; errors
+// are SCE net codes (0x804101xx, FreeBSD errno numbering).
+int      KYTY_SYSV_ABI NetSocket(const char* name, int family, int type, int protocol);
+int      KYTY_SYSV_ABI NetSocketClose(int sock);
+int      KYTY_SYSV_ABI NetShutdown(int sock, int how);
+int      KYTY_SYSV_ABI NetConnect(int sock, const void* addr, uint32_t addrlen);
+int      KYTY_SYSV_ABI NetSend(int sock, const void* buf, size_t len, int flags);
+int      KYTY_SYSV_ABI NetRecv(int sock, void* buf, size_t len, int flags);
+int      KYTY_SYSV_ABI NetSetsockopt(int sock, int level, int optname, const void* optval, uint32_t optlen);
+uint16_t KYTY_SYSV_ABI NetHtons(uint16_t host16);
+int      KYTY_SYSV_ABI NetEpollCreate(const char* name, int flags);
+int      KYTY_SYSV_ABI NetEpollControl(int eid, int op, int sock, const void* event);
+int      KYTY_SYSV_ABI NetEpollWait(int eid, void* events, int maxevents, int timeout_usec);
+int      KYTY_SYSV_ABI NetEpollDestroy(int eid);
+
 } // namespace Net
 
 namespace Ssl {

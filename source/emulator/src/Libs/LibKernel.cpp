@@ -1120,6 +1120,8 @@ LIB_DEFINE(InitLibKernel_1_Pthread)
 	LIB_FUNC("RXXqi4CtF8w", Posix::pthread_cond_destroy);
 	LIB_FUNC("wtkt-teR1so", Posix::pthread_attr_init);
 	LIB_FUNC("2Q0z6rnBrTE", Posix::pthread_attr_setstacksize);
+	LIB_FUNC("zHchY8ft5pk", Posix::pthread_attr_destroy);
+	LIB_FUNC("0TyVk4MSLt0", Posix::pthread_cond_init);
 	LIB_FUNC("E+tyo3lp5Lw", Posix::pthread_attr_setdetachstate);
 	LIB_FUNC("FIs3-UQT9sg", Posix::pthread_getschedparam);
 	LIB_FUNC("Xs9hdiD7sAA", Posix::pthread_setschedparam);

@@ -196,7 +196,9 @@ int KYTY_SYSV_ABI                pthread_cond_signal(LibKernel::PthreadCond* con
 int KYTY_SYSV_ABI pthread_cond_timedwait(LibKernel::PthreadCond* cond, LibKernel::PthreadMutex* mutex,
                                          const LibKernel::KernelTimespec* abstime);
 int KYTY_SYSV_ABI pthread_cond_destroy(LibKernel::PthreadCond* cond);
+int KYTY_SYSV_ABI pthread_cond_init(LibKernel::PthreadCond* cond, const LibKernel::PthreadCondattr* attr);
 int KYTY_SYSV_ABI pthread_attr_init(LibKernel::PthreadAttr* attr);
+int KYTY_SYSV_ABI pthread_attr_destroy(LibKernel::PthreadAttr* attr);
 int KYTY_SYSV_ABI pthread_attr_setstacksize(LibKernel::PthreadAttr* attr, size_t stack_size);
 int KYTY_SYSV_ABI pthread_attr_setdetachstate(LibKernel::PthreadAttr* attr, int state);
 int KYTY_SYSV_ABI pthread_getschedparam(LibKernel::Pthread thread, int* policy, LibKernel::KernelSchedParam* param);

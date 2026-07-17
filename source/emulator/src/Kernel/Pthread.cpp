@@ -2843,11 +2843,25 @@ int KYTY_SYSV_ABI pthread_cond_destroy(LibKernel::PthreadCond* cond)
 	return POSIX_PTHREAD_CALL(LibKernel::PthreadCondDestroy(cond));
 }
 
+int KYTY_SYSV_ABI pthread_cond_init(LibKernel::PthreadCond* cond, const LibKernel::PthreadCondattr* attr)
+{
+	PRINT_NAME();
+
+	return POSIX_PTHREAD_CALL(LibKernel::PthreadCondInit(cond, attr, nullptr));
+}
+
 int KYTY_SYSV_ABI pthread_attr_init(LibKernel::PthreadAttr* attr)
 {
 	PRINT_NAME();
 
 	return POSIX_PTHREAD_CALL(LibKernel::PthreadAttrInit(attr));
+}
+
+int KYTY_SYSV_ABI pthread_attr_destroy(LibKernel::PthreadAttr* attr)
+{
+	PRINT_NAME();
+
+	return POSIX_PTHREAD_CALL(LibKernel::PthreadAttrDestroy(attr));
 }
 
 int KYTY_SYSV_ABI pthread_attr_setstacksize(LibKernel::PthreadAttr* attr, size_t stack_size)

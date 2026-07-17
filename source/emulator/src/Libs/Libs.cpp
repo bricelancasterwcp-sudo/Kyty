@@ -24,6 +24,7 @@ LIB_DEFINE(InitMouse_1);
 LIB_DEFINE(InitNet_1);
 LIB_DEFINE(InitPad_1);
 LIB_DEFINE(InitPlayGo_1);
+LIB_DEFINE(InitRtc_1);
 LIB_DEFINE(InitSaveData_1);
 LIB_DEFINE(InitSysmodule_1);
 LIB_DEFINE(InitSystemService_1);
@@ -47,6 +48,7 @@ bool Init(const String& id, Loader::SymbolDatabase* s)
 	LIB_CHECK(U"libNet_1", InitNet_1);
 	LIB_CHECK(U"libPad_1", InitPad_1);
 	LIB_CHECK(U"libPlayGo_1", InitPlayGo_1);
+	LIB_CHECK(U"libRtc_1", InitRtc_1);
 	LIB_CHECK(U"libSaveData_1", InitSaveData_1);
 	LIB_CHECK(U"libSysmodule_1", InitSysmodule_1);
 	LIB_CHECK(U"libSystemService_1", InitSystemService_1);
@@ -73,6 +75,7 @@ void InitAll(Loader::SymbolDatabase* s)
 	LIB_LOAD(InitNet_1);
 	LIB_LOAD(InitPad_1);
 	LIB_LOAD(InitPlayGo_1);
+	LIB_LOAD(InitRtc_1);
 	LIB_LOAD(InitSaveData_1);
 	LIB_LOAD(InitSysmodule_1);
 	LIB_LOAD(InitSystemService_1);

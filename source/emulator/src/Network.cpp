@@ -11,7 +11,14 @@
 #include "Emulator/Libs/Errno.h"
 #include "Emulator/Libs/Libs.h"
 
+#include <arpa/inet.h>
 #include <atomic>
+#include <cerrno>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #ifdef KYTY_EMU_ENABLED
 
@@ -840,11 +847,387 @@ int KYTY_SYSV_ABI NetInetPton(int af, const char* src, void* dst)
 	EXIT_NOT_IMPLEMENTED(af != 2);
 	EXIT_NOT_IMPLEMENTED(src == nullptr);
 	EXIT_NOT_IMPLEMENTED(dst == nullptr);
-	EXIT_NOT_IMPLEMENTED(strcmp(src, "127.0.0.1") != 0);
 
 	printf("\t src = %.16s\n", src);
 
-	*static_cast<uint32_t*>(dst) = 0x7f000001;
+	// network byte order, like the real sceNetInetPton (the old hard-coded
+	// 127.0.0.1 wrote host order, which nothing could round-trip)
+	int res = inet_pton(AF_INET, src, dst);
+	if (res != 1)
+	{
+		return NET_ERROR_EINVAL;
+	}
+
+	return 1;
+}
+
+// --- BSD-socket bridge -------------------------------------------------------
+// sceNet* over host sockets, IPv4 only. Socket ids are host fds; error returns
+// are SCE net codes: 0x804101xx with FreeBSD errno numbering (which differs
+// from the Linux host's - see the translation below).
+
+static int errno_to_sce(int host_errno)
+{
+	switch (host_errno)
+	{
+		case EINTR: return NET_ERROR_EINTR;
+		case EBADF: return NET_ERROR_EBADF;
+		case ENOMEM: return NET_ERROR_ENOMEM;
+		case EACCES: return NET_ERROR_EACCES;
+		case EFAULT: return NET_ERROR_EFAULT;
+		case EINVAL: return NET_ERROR_EINVAL;
+		case EPIPE: return NET_ERROR_EPIPE;
+		case EAGAIN: return NET_ERROR_EAGAIN;
+		case EINPROGRESS: return NET_ERROR_EINPROGRESS;
+		case EALREADY: return NET_ERROR_EALREADY;
+		case EADDRINUSE: return NET_ERROR_EADDRINUSE;
+		case ENETUNREACH: return NET_ERROR_ENETUNREACH;
+		case ECONNRESET: return NET_ERROR_ECONNRESET;
+		case EISCONN: return NET_ERROR_EISCONN;
+		case ENOTCONN: return NET_ERROR_ENOTCONN;
+		case ETIMEDOUT: return static_cast<int>(0x8041013CU);    // FreeBSD ETIMEDOUT = 60
+		case ECONNREFUSED: return static_cast<int>(0x8041013DU); // FreeBSD ECONNREFUSED = 61
+		case EHOSTUNREACH: return static_cast<int>(0x80410141U); // FreeBSD EHOSTUNREACH = 65
+		default: return NET_ERROR_EINVAL;
+	}
+}
+
+// Guest sockaddr_in (FreeBSD-style): len, family, port (BE), addr (BE), zero[8]
+struct NetSockaddrIn
+{
+	uint8_t  sin_len;
+	uint8_t  sin_family;
+	uint16_t sin_port;
+	uint32_t sin_addr;
+	uint8_t  sin_zero[8];
+};
+static_assert(sizeof(NetSockaddrIn) == 16, "guest sockaddr_in ABI");
+
+int KYTY_SYSV_ABI NetSocket(const char* name, int family, int type, int protocol)
+{
+	PRINT_NAME();
+
+	printf("\t name = %s, family = %d, type = %d, protocol = %d\n", (name != nullptr ? name : "(null)"), family, type, protocol);
+
+	EXIT_NOT_IMPLEMENTED(family != 2);           // SCE_NET_AF_INET
+	EXIT_NOT_IMPLEMENTED(type != 1 && type != 2); // SCE_NET_SOCK_STREAM / SOCK_DGRAM
+
+	int fd = socket(AF_INET, (type == 1 ? SOCK_STREAM : SOCK_DGRAM), 0);
+	if (fd < 0)
+	{
+		return errno_to_sce(errno);
+	}
+
+	return fd;
+}
+
+static void epoll_forget_socket(int sock);
+
+int KYTY_SYSV_ABI NetSocketClose(int sock)
+{
+	PRINT_NAME();
+
+	// real epoll drops a fd from every set on last close; without this, host
+	// fd-number reuse would make stale registrations watch an unrelated socket
+	epoll_forget_socket(sock);
+
+	if (close(sock) < 0)
+	{
+		return errno_to_sce(errno);
+	}
+
+	return OK;
+}
+
+int KYTY_SYSV_ABI NetShutdown(int sock, int how)
+{
+	PRINT_NAME();
+
+	// SCE_NET_SHUT_RD/WR/RDWR = 0/1/2, same as the host
+	if (shutdown(sock, how) < 0)
+	{
+		return errno_to_sce(errno);
+	}
+
+	return OK;
+}
+
+int KYTY_SYSV_ABI NetConnect(int sock, const void* addr, uint32_t addrlen)
+{
+	PRINT_NAME();
+
+	EXIT_NOT_IMPLEMENTED(addr == nullptr);
+	EXIT_NOT_IMPLEMENTED(addrlen < sizeof(NetSockaddrIn));
+
+	const auto* in = static_cast<const NetSockaddrIn*>(addr);
+
+	EXIT_NOT_IMPLEMENTED(in->sin_family != 2);
+
+	sockaddr_in host {};
+	host.sin_family      = AF_INET;
+	host.sin_port        = in->sin_port; // already network byte order
+	host.sin_addr.s_addr = in->sin_addr;
+
+	printf("\t connect to %s:%u\n", inet_ntoa(host.sin_addr), ntohs(host.sin_port));
+
+	if (connect(sock, reinterpret_cast<sockaddr*>(&host), sizeof(host)) < 0)
+	{
+		return errno_to_sce(errno);
+	}
+
+	return OK;
+}
+
+int KYTY_SYSV_ABI NetSend(int sock, const void* buf, size_t len, int flags)
+{
+	EXIT_NOT_IMPLEMENTED(flags != 0);
+
+	auto sent = send(sock, buf, len, MSG_NOSIGNAL);
+	if (sent < 0)
+	{
+		return errno_to_sce(errno);
+	}
+
+	return static_cast<int>(sent);
+}
+
+int KYTY_SYSV_ABI NetRecv(int sock, void* buf, size_t len, int flags)
+{
+	EXIT_NOT_IMPLEMENTED(flags != 0);
+
+	auto got = recv(sock, buf, len, 0);
+	if (got < 0)
+	{
+		return errno_to_sce(errno);
+	}
+
+	return static_cast<int>(got);
+}
+
+int KYTY_SYSV_ABI NetSetsockopt(int sock, int level, int optname, const void* optval, uint32_t optlen)
+{
+	PRINT_NAME();
+
+	printf("\t sock = %d, level = 0x%x, optname = 0x%x\n", sock, static_cast<unsigned>(level), static_cast<unsigned>(optname));
+
+	// SCE_NET_SOL_SOCKET / SCE_NET_SO_NBIO -> O_NONBLOCK
+	if (level == 0xffff && optname == 0x1200)
+	{
+		EXIT_NOT_IMPLEMENTED(optval == nullptr || optlen < 4);
+		int  nb    = *static_cast<const int*>(optval);
+		int  fl    = fcntl(sock, F_GETFL, 0);
+		int  newfl = (nb != 0 ? (fl | O_NONBLOCK) : (fl & ~O_NONBLOCK));
+		if (fl < 0 || fcntl(sock, F_SETFL, newfl) < 0)
+		{
+			return errno_to_sce(errno);
+		}
+		return OK;
+	}
+
+	// anything else is best-effort ignorable for now (buffer sizes etc.)
+	printf("\t (ignored)\n");
+	return OK;
+}
+
+uint16_t KYTY_SYSV_ABI NetHtons(uint16_t host16)
+{
+	return htons(host16);
+}
+
+// Guest-visible epoll event, matching SceNetEpollEvent (24 bytes)
+struct NetEpollEvent
+{
+	uint32_t events;   // SCE_NET_EPOLLIN 0x1, EPOLLOUT 0x2, EPOLLERR 0x8, EPOLLHUP 0x10
+	uint32_t reserved;
+	int32_t  ident;
+	uint32_t pad;
+	uint64_t data;
+};
+static_assert(sizeof(NetEpollEvent) == 24, "guest epoll event ABI");
+
+struct NetEpollEntry
+{
+	int      sock   = -1;
+	uint32_t events = 0;
+	uint64_t data   = 0;
+};
+
+struct NetEpoll
+{
+	bool                  used = false;
+	Vector<NetEpollEntry> fds;
+};
+
+static Core::Mutex      g_epoll_mutex;
+static Vector<NetEpoll> g_epolls;
+
+static void epoll_forget_socket(int sock)
+{
+	Core::LockGuard lock(g_epoll_mutex);
+
+	for (uint32_t e = 0; e < g_epolls.Size(); e++)
+	{
+		if (!g_epolls[e].used)
+		{
+			continue;
+		}
+		auto& fds = g_epolls[e].fds;
+		for (uint32_t i = 0; i < fds.Size();)
+		{
+			if (fds[i].sock == sock)
+			{
+				fds.RemoveAt(i);
+			} else
+			{
+				i++;
+			}
+		}
+	}
+}
+
+int KYTY_SYSV_ABI NetEpollCreate(const char* name, int flags)
+{
+	PRINT_NAME();
+
+	printf("\t name = %s\n", (name != nullptr ? name : "(null)"));
+
+	EXIT_NOT_IMPLEMENTED(flags != 0);
+
+	Core::LockGuard lock(g_epoll_mutex);
+
+	for (uint32_t i = 0; i < g_epolls.Size(); i++)
+	{
+		if (!g_epolls[i].used)
+		{
+			g_epolls[i].used = true;
+			g_epolls[i].fds.Clear();
+			return static_cast<int>(i);
+		}
+	}
+
+	NetEpoll e;
+	e.used = true;
+	g_epolls.Add(e);
+	return static_cast<int>(g_epolls.Size()) - 1;
+}
+
+int KYTY_SYSV_ABI NetEpollControl(int eid, int op, int sock, const void* event)
+{
+	PRINT_NAME();
+
+	Core::LockGuard lock(g_epoll_mutex);
+
+	if (eid < 0 || static_cast<uint32_t>(eid) >= g_epolls.Size() || !g_epolls[eid].used)
+	{
+		return NET_ERROR_EBADF;
+	}
+
+	auto& fds = g_epolls[eid].fds;
+
+	int index = -1;
+	for (uint32_t i = 0; i < fds.Size(); i++)
+	{
+		if (fds[i].sock == sock)
+		{
+			index = static_cast<int>(i);
+			break;
+		}
+	}
+
+	switch (op)
+	{
+		case 1: // SCE_NET_EPOLL_CTL_ADD
+		case 2: // SCE_NET_EPOLL_CTL_MOD
+		{
+			EXIT_NOT_IMPLEMENTED(event == nullptr);
+			const auto* ev = static_cast<const NetEpollEvent*>(event);
+			if (index < 0)
+			{
+				NetEpollEntry entry;
+				entry.sock = sock;
+				fds.Add(entry);
+				index = static_cast<int>(fds.Size()) - 1;
+			}
+			fds[index].events = ev->events;
+			fds[index].data   = ev->data;
+			return OK;
+		}
+		case 3: // SCE_NET_EPOLL_CTL_DEL
+			if (index >= 0)
+			{
+				fds.RemoveAt(index);
+			}
+			return OK;
+		default: return NET_ERROR_EINVAL;
+	}
+}
+
+int KYTY_SYSV_ABI NetEpollWait(int eid, void* events, int maxevents, int timeout_usec)
+{
+	Vector<NetEpollEntry> fds;
+	{
+		Core::LockGuard lock(g_epoll_mutex);
+
+		if (eid < 0 || static_cast<uint32_t>(eid) >= g_epolls.Size() || !g_epolls[eid].used)
+		{
+			return NET_ERROR_EBADF;
+		}
+		fds = g_epolls[eid].fds;
+	}
+
+	EXIT_NOT_IMPLEMENTED(events == nullptr || maxevents < 1);
+
+	Vector<pollfd> host;
+	auto           num = static_cast<int>(fds.Size());
+	for (int i = 0; i < num; i++)
+	{
+		pollfd p {};
+		p.fd     = fds[i].sock;
+		p.events = static_cast<short>(((fds[i].events & 0x1u) != 0 ? POLLIN : 0) | ((fds[i].events & 0x2u) != 0 ? POLLOUT : 0));
+		host.Add(p);
+	}
+
+	// 64-bit intermediate: timeout_usec near INT_MAX must not overflow
+	int timeout_ms = (timeout_usec < 0 ? -1 : static_cast<int>((static_cast<int64_t>(timeout_usec) + 999) / 1000));
+
+	int ready = poll(host.GetData(), num, timeout_ms);
+	if (ready < 0)
+	{
+		return errno_to_sce(errno);
+	}
+
+	auto* out = static_cast<NetEpollEvent*>(events);
+	int   n   = 0;
+	for (int i = 0; i < num && n < maxevents; i++)
+	{
+		if (host[i].revents == 0)
+		{
+			continue;
+		}
+		out[n]        = NetEpollEvent {};
+		out[n].events = ((host[i].revents & POLLIN) != 0 ? 0x1u : 0) | ((host[i].revents & POLLOUT) != 0 ? 0x2u : 0) |
+		                ((host[i].revents & POLLERR) != 0 ? 0x8u : 0) | ((host[i].revents & POLLHUP) != 0 ? 0x10u : 0);
+		out[n].ident = fds[i].sock;
+		out[n].data  = fds[i].data;
+		n++;
+	}
+
+	return n;
+}
+
+int KYTY_SYSV_ABI NetEpollDestroy(int eid)
+{
+	PRINT_NAME();
+
+	Core::LockGuard lock(g_epoll_mutex);
+
+	if (eid < 0 || static_cast<uint32_t>(eid) >= g_epolls.Size() || !g_epolls[eid].used)
+	{
+		return NET_ERROR_EBADF;
+	}
+
+	g_epolls[eid].used = false;
+	g_epolls[eid].fds.Clear();
 
 	return OK;
 }

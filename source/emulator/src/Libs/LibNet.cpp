@@ -63,6 +63,64 @@ int KYTY_SYSV_ABI NetGetMacAddress(Net::NetEtherAddr* addr, int flags)
 	return NET_CALL(Net::NetGetMacAddress(addr, flags));
 }
 
+// BSD-socket bridge. Note: like the real sceNet, failures BOTH set the errno
+// cell (sceNetErrnoLoc) via NET_CALL and return the negative SCE code; guests
+// built against OpenOrbis read the return value directly.
+int KYTY_SYSV_ABI NetSocket(const char* name, int family, int type, int protocol)
+{
+	return NET_CALL(Net::NetSocket(name, family, type, protocol));
+}
+
+int KYTY_SYSV_ABI NetSocketClose(int sock)
+{
+	return NET_CALL(Net::NetSocketClose(sock));
+}
+
+int KYTY_SYSV_ABI NetShutdown(int sock, int how)
+{
+	return NET_CALL(Net::NetShutdown(sock, how));
+}
+
+int KYTY_SYSV_ABI NetConnect(int sock, const void* addr, uint32_t addrlen)
+{
+	return NET_CALL(Net::NetConnect(sock, addr, addrlen));
+}
+
+int KYTY_SYSV_ABI NetSend(int sock, const void* buf, size_t len, int flags)
+{
+	return NET_CALL(Net::NetSend(sock, buf, len, flags));
+}
+
+int KYTY_SYSV_ABI NetRecv(int sock, void* buf, size_t len, int flags)
+{
+	return NET_CALL(Net::NetRecv(sock, buf, len, flags));
+}
+
+int KYTY_SYSV_ABI NetSetsockopt(int sock, int level, int optname, const void* optval, uint32_t optlen)
+{
+	return NET_CALL(Net::NetSetsockopt(sock, level, optname, optval, optlen));
+}
+
+int KYTY_SYSV_ABI NetEpollCreate(const char* name, int flags)
+{
+	return NET_CALL(Net::NetEpollCreate(name, flags));
+}
+
+int KYTY_SYSV_ABI NetEpollControl(int eid, int op, int sock, const void* event)
+{
+	return NET_CALL(Net::NetEpollControl(eid, op, sock, event));
+}
+
+int KYTY_SYSV_ABI NetEpollWait(int eid, void* events, int maxevents, int timeout_usec)
+{
+	return NET_CALL(Net::NetEpollWait(eid, events, maxevents, timeout_usec));
+}
+
+int KYTY_SYSV_ABI NetEpollDestroy(int eid)
+{
+	return NET_CALL(Net::NetEpollDestroy(eid));
+}
+
 LIB_DEFINE(InitNet_1_Net)
 {
 	LIB_FUNC("Nlev7Lg8k3A", LibNet::NetInit);
@@ -70,6 +128,21 @@ LIB_DEFINE(InitNet_1_Net)
 	LIB_FUNC("8Kcp5d-q1Uo", LibNet::NetInetPton);
 	LIB_FUNC("v6M4txecCuo", LibNet::NetEtherNtostr);
 	LIB_FUNC("6Oc0bLsIYe0", LibNet::NetGetMacAddress);
+
+	// BSD-socket bridge (host sockets)
+	LIB_FUNC("Q4qBuN-c0ZM", LibNet::NetSocket);
+	LIB_FUNC("45ggEzakPJQ", LibNet::NetSocketClose);
+	LIB_FUNC("TSM6whtekok", LibNet::NetShutdown);
+	LIB_FUNC("OXXX4mUk3uk", LibNet::NetConnect);
+	LIB_FUNC("beRjXBn-z+o", LibNet::NetSend);
+	LIB_FUNC("9wO9XrMsNhc", LibNet::NetRecv);
+	LIB_FUNC("2mKX2Spso7I", LibNet::NetSetsockopt);
+	LIB_FUNC("iWQWrwiSt8A", Net::NetHtons);
+	LIB_FUNC("SF47kB2MNTo", LibNet::NetEpollCreate);
+	LIB_FUNC("ZVw46bsasAk", LibNet::NetEpollControl);
+	LIB_FUNC("drjIbDbA7UQ", LibNet::NetEpollWait);
+	LIB_FUNC("Inp1lfL+Jdw", LibNet::NetEpollDestroy);
+	LIB_FUNC("HQOwnfMGipQ", LibNet::GetNetErrorAddr); // sceNetErrnoLoc
 }
 
 } // namespace LibNet

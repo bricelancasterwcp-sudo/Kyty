@@ -2662,6 +2662,11 @@ void WindowDrawBuffer(VideoOutVulkanImage* image)
 			int               ow    = static_cast<int>(w) / step;
 			int               oh    = static_cast<int>(h) / step;
 			Kyty::printf("KFRAME_BEGIN %d %d flip=%d\n", ow, oh, s_dump_n - 1);
+			// scanout bytes follow the image format: R8G8B8A8 scanouts (e.g.
+			// VideoOut pixel format 0x80002200) are RGBA, everything else BGRA
+			bool rgba = (image->format == VK_FORMAT_R8G8B8A8_SRGB || image->format == VK_FORMAT_R8G8B8A8_UNORM);
+			int  ri   = (rgba ? 0 : 2);
+			int  bi   = (rgba ? 2 : 0);
 			uint8_t line[57 * 3];
 			char    out[57 * 4 + 1];
 			int     col = 0;
@@ -2669,10 +2674,10 @@ void WindowDrawBuffer(VideoOutVulkanImage* image)
 			{
 				for (int x = 0; x < ow; x++)
 				{
-					const uint8_t* p = host + (static_cast<size_t>(y * step) * w + x * step) * 4; // BGRA
-					line[col * 3 + 0] = p[2];                                                      // R
-					line[col * 3 + 1] = p[1];                                                      // G
-					line[col * 3 + 2] = p[0];                                                      // B
+					const uint8_t* p = host + (static_cast<size_t>(y * step) * w + x * step) * 4;
+					line[col * 3 + 0] = p[ri];
+					line[col * 3 + 1] = p[1];
+					line[col * 3 + 2] = p[bi];
 					col++;
 					if (col == 57 || (y == oh - 1 && x == ow - 1))
 					{

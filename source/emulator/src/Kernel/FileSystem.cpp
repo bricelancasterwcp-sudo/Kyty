@@ -358,7 +358,9 @@ int KYTY_SYSV_ABI KernelOpen(const char* path, int flags, uint16_t mode)
 	{
 		bool result = false;
 
-		if (creat)
+		// O_CREAT on an existing file (without O_TRUNC) opens it intact;
+		// Create() would clobber the contents
+		if (creat && (trunc || !Core::File::IsFileExisting(file->real_name)))
 		{
 			result = file->f.Create(file->real_name);
 
@@ -371,8 +373,6 @@ int KYTY_SYSV_ABI KernelOpen(const char* path, int flags, uint16_t mode)
 			printf("\tOpen: " FG_WHITE BOLD "%s" DEFAULT ", %s\n", file->real_name.C_Str(),
 			       (result ? FG_GREEN "[ok]" FG_DEFAULT : FG_RED "[fail]" FG_DEFAULT));
 		}
-
-		EXIT_NOT_IMPLEMENTED(creat && !trunc);
 
 		if (result && trunc)
 		{
