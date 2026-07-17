@@ -4271,7 +4271,11 @@ static void PrepareTextures(uint64_t submit_id, CommandBuffer* buffer, const Sha
 			EXIT_NOT_IMPLEMENTED(!(r.TileMode() == 8 || r.TileMode() == 13 || r.TileMode() == 14 || r.TileMode() == 2 ||
 			                       r.TileMode() == 10 || r.TileMode() == 31));
 			EXIT_NOT_IMPLEMENTED(r.BaseArray() != 0);
-			EXIT_NOT_IMPLEMENTED(r.LastArray() != 0);
+			// freegnm's .gnf textures encode LastArray=1 for ordinary single-slice 2D
+			// textures (Depth==0, numslices==1); Kyty builds a plain 2D image from the base
+			// slice, so that encoding is harmless. A genuine multi-slice array (LastArray>1)
+			// would still need an array image view, so keep rejecting that.
+			EXIT_NOT_IMPLEMENTED(r.LastArray() > 1);
 			EXIT_NOT_IMPLEMENTED(r.MinLodWarn() != 0);
 			EXIT_NOT_IMPLEMENTED(r.CounterBankId() != 0);
 			EXIT_NOT_IMPLEMENTED(r.LodHdwCntEn() != false);

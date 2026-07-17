@@ -80,6 +80,9 @@ public:
 	void SetNumInstances(uint32_t num_instances);
 	void DrawIndex(uint32_t index_count, const void* index_addr, uint32_t flags, uint32_t type);
 	void DrawIndexAuto(uint32_t index_count, uint32_t flags);
+	void SetIndexBase(uint64_t addr);
+	void SetDrawIndirectBase(uint64_t addr);
+	void DrawIndexIndirect(uint32_t data_offset);
 	void WriteAtEndOfPipe32(uint32_t cache_policy, uint32_t event_write_dest, uint32_t eop_event_type, uint32_t cache_action,
 	                        uint32_t event_index, uint32_t event_write_source, void* dst_gpu_addr, uint32_t value,
 	                        uint32_t interrupt_selector);
@@ -146,6 +149,8 @@ private:
 	HW::UserSgprType m_user_data_marker    = HW::UserSgprType::Unknown;
 	uint32_t         m_index_type_and_size = 0;
 	uint32_t         m_num_instances       = 1;
+	uint64_t         m_index_base          = 0; // IT_INDEX_BASE: index-buffer base for indirect draws
+	uint64_t         m_draw_indirect_base  = 0; // IT_SET_BASE(1): DrawIndexedIndirectArgs buffer
 
 	Core::Mutex m_mutex;
 	Core::Mutex m_run_mutex;
@@ -1013,6 +1018,16 @@ void CommandProcessor::Run(uint32_t* data, uint32_t num_dw)
 
 		auto cmd_id = *cmd++;
 
+		// A fully-zero dword is not a valid packet header (a Type-3 PKT3 has bits
+		// [31:30] == 0b11). Command buffers can contain zero padding/holes, e.g. an
+		// indirect-draw slot a double-buffered frame has not filled yet. Skip it
+		// rather than aborting.
+		if (cmd_id == 0)
+		{
+			dw -= 1;
+			continue;
+		}
+
 		auto op = (cmd_id >> 8u) & 0xffu;
 
 		auto pfunc = g_cp_op_func[op];
@@ -1058,6 +1073,36 @@ void CommandProcessor::DrawIndex(uint32_t index_count, const void* index_addr, u
 
 	GraphicsRenderDrawIndex(m_sumbit_id, m_buffer[m_current_buffer], &m_ctx, &m_ucfg, &m_sh_ctx, m_index_type_and_size, index_count,
 	                        index_addr, flags, type, m_num_instances);
+}
+
+void CommandProcessor::SetIndexBase(uint64_t addr)
+{
+	Core::LockGuard lock(m_mutex);
+	m_index_base = addr;
+}
+
+void CommandProcessor::SetDrawIndirectBase(uint64_t addr)
+{
+	Core::LockGuard lock(m_mutex);
+	m_draw_indirect_base = addr;
+}
+
+void CommandProcessor::DrawIndexIndirect(uint32_t data_offset)
+{
+	// The draw arguments live in a GPU buffer the guest CPU already filled before
+	// submit; Kyty maps guest memory flat, so read them directly and route to the
+	// ordinary indexed draw with the base set by IT_INDEX_BASE.
+	const auto* args = reinterpret_cast<const uint32_t*>(m_draw_indirect_base + data_offset);
+
+	uint32_t index_count    = args[0]; // GnmDrawIndexedIndirectArgs.indexCount
+	uint32_t instance_count = args[1]; // .instanceCount
+
+	// Kyty's indexed draw issues vkCmdDrawIndexed(..., firstIndex=0, vertexOffset=0,
+	// firstInstance=0); non-zero offsets are not plumbed through yet.
+	EXIT_NOT_IMPLEMENTED(args[2] != 0 || args[3] != 0 || args[4] != 0);
+
+	SetNumInstances(instance_count);
+	DrawIndex(index_count, reinterpret_cast<const void*>(m_index_base), 0, 0);
 }
 
 void CommandProcessor::DispatchDirect(uint32_t thread_group_x, uint32_t thread_group_y, uint32_t thread_group_z, uint32_t mode)
@@ -2870,6 +2915,49 @@ KYTY_CP_OP_PARSER(cp_op_draw_index_auto)
 	return 1;
 }
 
+KYTY_CP_OP_PARSER(cp_op_index_base) // IT_INDEX_BASE: index-buffer base for a following indirect draw
+{
+	KYTY_PROFILER_FUNCTION();
+
+	EXIT_NOT_IMPLEMENTED(cmd_id != 0xC0012600);
+
+	cp->SetIndexBase(static_cast<uint64_t>(buffer[0]) | (static_cast<uint64_t>(buffer[1]) << 32u));
+
+	return 2;
+}
+
+KYTY_CP_OP_PARSER(cp_op_index_buffer_size) // IT_INDEX_BUFFER_SIZE: index-count bound (Kyty derives size from the draw)
+{
+	KYTY_PROFILER_FUNCTION();
+
+	EXIT_NOT_IMPLEMENTED(cmd_id != 0xC0001300);
+
+	return 1;
+}
+
+KYTY_CP_OP_PARSER(cp_op_set_base) // IT_SET_BASE: base_index 1 == DRAW_INDIRECT args buffer
+{
+	KYTY_PROFILER_FUNCTION();
+
+	EXIT_NOT_IMPLEMENTED(cmd_id != 0xC0021100);
+	EXIT_NOT_IMPLEMENTED(buffer[0] != 1); // only the draw-indirect base is used
+
+	cp->SetDrawIndirectBase((static_cast<uint64_t>(buffer[1]) & 0xFFFFFFF8u) | (static_cast<uint64_t>(buffer[2]) << 32u));
+
+	return 3;
+}
+
+KYTY_CP_OP_PARSER(cp_op_draw_index_indirect) // IT_DRAW_INDEX_INDIRECT
+{
+	KYTY_PROFILER_FUNCTION();
+
+	EXIT_NOT_IMPLEMENTED(cmd_id != 0xC0032500); // predication not handled
+
+	cp->DrawIndexIndirect(buffer[0]); // buffer[0] = byte offset into the args buffer
+
+	return 4;
+}
+
 KYTY_CP_OP_PARSER(cp_op_draw_reset)
 {
 	KYTY_PROFILER_FUNCTION();
@@ -4241,6 +4329,10 @@ static void graphics_init_jmp_tables()
 	g_cp_op_func[Pm4::IT_INDEX_TYPE]              = cp_op_index_type;
 	g_cp_op_func[Pm4::IT_NUM_INSTANCES]           = cp_op_num_instances;
 	g_cp_op_func[Pm4::IT_DRAW_INDEX_AUTO]         = cp_op_draw_index_auto;
+	g_cp_op_func[Pm4::IT_INDEX_BASE]              = cp_op_index_base;
+	g_cp_op_func[Pm4::IT_INDEX_BUFFER_SIZE]       = cp_op_index_buffer_size;
+	g_cp_op_func[Pm4::IT_SET_BASE]                = cp_op_set_base;
+	g_cp_op_func[Pm4::IT_DRAW_INDEX_INDIRECT]     = cp_op_draw_index_indirect;
 	g_cp_op_func[Pm4::IT_WAIT_REG_MEM]            = cp_op_wait_reg_mem;
 	g_cp_op_func[Pm4::IT_WRITE_DATA]              = cp_op_write_data;
 	g_cp_op_func[Pm4::IT_INDIRECT_BUFFER]         = cp_op_indirect_buffer;
