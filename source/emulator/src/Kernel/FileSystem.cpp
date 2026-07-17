@@ -381,6 +381,9 @@ int KYTY_SYSV_ABI KernelOpen(const char* path, int flags, uint16_t mode)
 
 		if (!result || file->f.IsInvalid())
 		{
+			// the host file may have been opened before the failure (e.g. a
+			// failed truncate); ~File() asserts if it is destroyed still open
+			file->f.Close();
 			g_files->DeleteDescriptor(descriptor);
 			return KERNEL_ERROR_EACCES;
 		}

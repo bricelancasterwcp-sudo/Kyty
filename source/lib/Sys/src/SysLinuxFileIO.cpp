@@ -327,9 +327,15 @@ uint64_t sys_file_size(const String& file_name)
 	return size;
 }
 
-bool sys_file_truncate(sys_file_t& /*f*/, uint64_t /*size*/)
+bool sys_file_truncate(sys_file_t& f, uint64_t size)
 {
-	return false;
+	bool ok = false;
+	if (f.type == SYS_FILE_FILE)
+	{
+		// flush stdio's buffer first - ftruncate acts on the fd underneath it
+		ok = (fflush(f.f) == 0 && ftruncate(fileno(f.f), static_cast<off_t>(size)) == 0);
+	}
+	return ok;
 }
 
 bool sys_file_seek(sys_file_t& f, uint64_t offset)
