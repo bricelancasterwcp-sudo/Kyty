@@ -31,13 +31,6 @@ An open, from-scratch effort to run PlayStation software on Linux — the PS4 **
 
 <p align="center"><sub>All captured from this fork's own GNM→Vulkan output on Linux (960×540). It started with a single hand-encoded GCN triangle and grew into the pipeline above — the GCN→SPIR-V shader recompiler and command processor are implemented from scratch.</sub></p>
 
-### 💜 Support this project
-
-Kyty-Linux is reverse-engineered and developed in the open, by one person, in spare time — every screenshot above is hours of digging into the PS4's GPU and OS. If you find it interesting or useful, **sponsoring directly funds that work** and keeps the progress coming.
-
-GitHub Sponsors is applied for and **pending GitHub's approval** — once it's live, a **Sponsor** ❤️ button will appear at the top of this page. Until then, a ⭐ **star**, a bug report, or a contribution helps just as much. Thank you 🙏
-
----
 ### Linux port status
 
 Verified on Ubuntu (gcc 13+, X11/XWayland, Vulkan on NVIDIA), using homebrew built with the open-source [OpenOrbis PS4 Toolchain](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain):
