@@ -352,6 +352,43 @@ int KYTY_SYSV_ABI GraphicsDrawIndexAuto(uint32_t* cmd, uint64_t size, uint32_t i
 	return OK;
 }
 
+int KYTY_SYSV_ABI GraphicsDrawIndexIndirect(uint32_t* cmd, uint64_t size, uint32_t data_offset, uint32_t stage, uint32_t vertex_off_sgpr,
+                                            uint32_t instance_off_sgpr, uint32_t flags)
+{
+	PRINT_NAME();
+
+	EXIT_NOT_IMPLEMENTED(size < 9);
+
+	printf("\t cmd_buffer        = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(cmd));
+	printf("\t size              = %" PRIu64 "\n", size);
+	printf("\t data_offset       = %" PRIu32 "\n", data_offset);
+	printf("\t stage             = %" PRIu32 "\n", stage);
+	printf("\t vertex_off_sgpr   = %" PRIu32 "\n", vertex_off_sgpr);
+	printf("\t instance_off_sgpr = %" PRIu32 "\n", instance_off_sgpr);
+	printf("\t flags             = %08" PRIx32 "\n", flags);
+
+	// Per-draw base-vertex/base-instance injected through SGPRs is not plumbed through yet;
+	// the CP handler issues vkCmdDrawIndexed with vertexOffset/firstInstance = 0.
+	EXIT_NOT_IMPLEMENTED(vertex_off_sgpr != 0 || instance_off_sgpr != 0);
+	EXIT_NOT_IMPLEMENTED(flags != 0); // predication not handled
+
+	// Emit the real GNM PKT3_DRAW_INDEX_INDIRECT packet (9 dwords). The command processor
+	// (cp_op_draw_index_indirect) reads the {indexCount, instanceCount, ...} draw arguments
+	// from the buffer that IT_SET_BASE(base_index=1) established, at data_offset. Layout
+	// mirrors freegnm's gnmDriverDrawIndexIndirect generic backend byte-for-byte.
+	cmd[0] = 0xC0000000u | (3u << 16u) | (Pm4::IT_DRAW_INDEX_INDIRECT << 8u); // count=3 -> 4 body dwords
+	cmd[1] = data_offset;
+	cmd[2] = 0; // vertex-offset SGPR select (unused: vertex_off_sgpr == 0)
+	cmd[3] = 0; // instance-offset SGPR select (unused: instance_off_sgpr == 0)
+	cmd[4] = 0; // DRAW_INITIATOR: index source
+	cmd[5] = 0xC0000000u | (2u << 16u) | (Pm4::IT_NOP << 8u); // PKT3 NOP pad, count=2
+	cmd[6] = 0;
+	cmd[7] = 0;
+	cmd[8] = 0;
+
+	return OK;
+}
+
 int KYTY_SYSV_ABI GraphicsInsertWaitFlipDone(uint32_t* cmd, uint64_t size, uint32_t video_out_handle, uint32_t display_buffer_index)
 {
 	PRINT_NAME();

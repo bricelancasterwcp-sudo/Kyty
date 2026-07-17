@@ -31,6 +31,8 @@ int KYTY_SYSV_ABI      GraphicsSetEmbeddedVsShader(uint32_t* cmd, uint64_t size,
 int KYTY_SYSV_ABI      GraphicsDrawIndex(uint32_t* cmd, uint64_t size, uint32_t index_count, const void* index_addr, uint32_t flags,
                                          uint32_t type);
 int KYTY_SYSV_ABI      GraphicsDrawIndexAuto(uint32_t* cmd, uint64_t size, uint32_t index_count, uint32_t flags);
+int KYTY_SYSV_ABI      GraphicsDrawIndexIndirect(uint32_t* cmd, uint64_t size, uint32_t data_offset, uint32_t stage, uint32_t vertex_off_sgpr,
+                                                 uint32_t instance_off_sgpr, uint32_t flags);
 int KYTY_SYSV_ABI      GraphicsSubmitCommandBuffers(uint32_t count, void* dcb_gpu_addrs[], const uint32_t* dcb_sizes_in_bytes,
                                                     void* ccb_gpu_addrs[], const uint32_t* ccb_sizes_in_bytes);
 int KYTY_SYSV_ABI      GraphicsSubmitAndFlipCommandBuffers(uint32_t count, void* dcb_gpu_addrs[], const uint32_t* dcb_sizes_in_bytes,
