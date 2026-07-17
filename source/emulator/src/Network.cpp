@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cerrno>
 #include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -948,6 +949,85 @@ int KYTY_SYSV_ABI NetShutdown(int sock, int how)
 	{
 		return errno_to_sce(errno);
 	}
+
+	return OK;
+}
+
+// DNS resolver: a resolver id is just an opaque handle (there is no per-handle
+// host state - getaddrinfo runs synchronously in StartNtoa).
+static std::atomic<int> g_resolver_next {1};
+
+// SCE_NET_RESOLVER_ERROR_NO_RECORD
+static constexpr int NET_RESOLVER_ERROR_NO_RECORD = static_cast<int>(0x804101A1U);
+
+int KYTY_SYSV_ABI NetResolverCreate(const char* name, int memid, int flags)
+{
+	PRINT_NAME();
+
+	printf("\t name = %s\n", (name != nullptr ? name : "(null)"));
+
+	EXIT_NOT_IMPLEMENTED(flags != 0);
+
+	// memid (the sceNet memory pool) is irrelevant to a getaddrinfo bridge
+	(void)memid;
+
+	return g_resolver_next.fetch_add(1);
+}
+
+int KYTY_SYSV_ABI NetResolverStartNtoa(int rid, const char* hostname, uint32_t* addr, int timeout, int retry, int flags)
+{
+	PRINT_NAME();
+
+	EXIT_NOT_IMPLEMENTED(hostname == nullptr || addr == nullptr);
+	EXIT_NOT_IMPLEMENTED(flags != 0);
+
+	(void)rid;
+	// LIMITATION: the guest's timeout/retry are not honored - getaddrinfo has
+	// no timeout parameter and runs synchronously on the caller (the guest's
+	// Http/Server worker thread, so it never blocks the main loop), and the
+	// no-op NetResolverAbort cannot interrupt it. Bounding it via a detached
+	// helper thread was tried and rejected: a lookup still in flight at process
+	// exit (e.g. ClassiCube's heartbeat host on a real DNS server) crashes
+	// during static teardown. getaddrinfo's own resolver timeout is the bound.
+	(void)timeout;
+	(void)retry;
+
+	printf("\t hostname = %s\n", hostname);
+
+	addrinfo hints {};
+	hints.ai_family   = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+
+	addrinfo* res = nullptr;
+	int       rc  = getaddrinfo(hostname, nullptr, &hints, &res);
+	if (rc != 0)
+	{
+		// getaddrinfo leaves *res undefined on error - do not free it
+		return NET_RESOLVER_ERROR_NO_RECORD;
+	}
+	if (res == nullptr)
+	{
+		return NET_RESOLVER_ERROR_NO_RECORD;
+	}
+
+	*addr = reinterpret_cast<sockaddr_in*>(res->ai_addr)->sin_addr.s_addr; // network order
+	freeaddrinfo(res);
+
+	printf("\t resolved to 0x%08x\n", *addr);
+
+	return OK;
+}
+
+int KYTY_SYSV_ABI NetResolverDestroy(int rid)
+{
+	PRINT_NAME();
+
+	return OK;
+}
+
+int KYTY_SYSV_ABI NetResolverAbort(int rid, int flags)
+{
+	PRINT_NAME();
 
 	return OK;
 }

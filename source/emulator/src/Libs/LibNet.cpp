@@ -121,6 +121,26 @@ int KYTY_SYSV_ABI NetEpollDestroy(int eid)
 	return NET_CALL(Net::NetEpollDestroy(eid));
 }
 
+int KYTY_SYSV_ABI NetResolverCreate(const char* name, int memid, int flags)
+{
+	return NET_CALL(Net::NetResolverCreate(name, memid, flags));
+}
+
+int KYTY_SYSV_ABI NetResolverStartNtoa(int rid, const char* hostname, uint32_t* addr, int timeout, int retry, int flags)
+{
+	return NET_CALL(Net::NetResolverStartNtoa(rid, hostname, addr, timeout, retry, flags));
+}
+
+int KYTY_SYSV_ABI NetResolverDestroy(int rid)
+{
+	return NET_CALL(Net::NetResolverDestroy(rid));
+}
+
+int KYTY_SYSV_ABI NetResolverAbort(int rid, int flags)
+{
+	return NET_CALL(Net::NetResolverAbort(rid, flags));
+}
+
 LIB_DEFINE(InitNet_1_Net)
 {
 	LIB_FUNC("Nlev7Lg8k3A", LibNet::NetInit);
@@ -143,6 +163,12 @@ LIB_DEFINE(InitNet_1_Net)
 	LIB_FUNC("drjIbDbA7UQ", LibNet::NetEpollWait);
 	LIB_FUNC("Inp1lfL+Jdw", LibNet::NetEpollDestroy);
 	LIB_FUNC("HQOwnfMGipQ", LibNet::GetNetErrorAddr); // sceNetErrnoLoc
+
+	// DNS resolver (getaddrinfo bridge)
+	LIB_FUNC("C4UgDHHPvdw", LibNet::NetResolverCreate);
+	LIB_FUNC("Nd91WaWmG2w", LibNet::NetResolverStartNtoa);
+	LIB_FUNC("kJlYH5uMAWI", LibNet::NetResolverDestroy);
+	LIB_FUNC("AzqoBha7js4", LibNet::NetResolverAbort);
 }
 
 } // namespace LibNet
