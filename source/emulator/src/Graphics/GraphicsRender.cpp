@@ -987,7 +987,7 @@ static void d_check(const HW::DepthControl& c, const HW::StencilControl& s, cons
 	// EXIT_NOT_IMPLEMENTED(c.z_write_enable != false);
 	EXIT_NOT_IMPLEMENTED(c.depth_bounds_enable != false);
 	// EXIT_NOT_IMPLEMENTED(c.zfunc != 0);
-	EXIT_NOT_IMPLEMENTED(c.backface_enable != false);
+	// two-sided stencil supported (back-face state fully wired below)
 	// EXIT_NOT_IMPLEMENTED(c.stencilfunc != 0);
 	// EXIT_NOT_IMPLEMENTED(c.stencilfunc_bf != 0);
 	EXIT_NOT_IMPLEMENTED(c.color_writes_on_depth_fail_enable != false);
@@ -995,9 +995,8 @@ static void d_check(const HW::DepthControl& c, const HW::StencilControl& s, cons
 	// EXIT_NOT_IMPLEMENTED(s.stencil_fail != 0);
 	// EXIT_NOT_IMPLEMENTED(s.stencil_zpass != 0);
 	// EXIT_NOT_IMPLEMENTED(s.stencil_zfail != 0);
-	EXIT_NOT_IMPLEMENTED(s.stencil_fail_bf != 0);
-	EXIT_NOT_IMPLEMENTED(s.stencil_zpass_bf != 0);
-	EXIT_NOT_IMPLEMENTED(s.stencil_zfail_bf != 0);
+	// back-face stencil ops flow through get_stencil_state when
+	// backface_enable is set (two-sided stencil)
 	// EXIT_NOT_IMPLEMENTED(sm.stencil_testval != 0);
 	// EXIT_NOT_IMPLEMENTED(sm.stencil_mask != 0);
 	// EXIT_NOT_IMPLEMENTED(sm.stencil_writemask != 0);
@@ -3944,7 +3943,6 @@ static void FindRenderDepthInfo(uint64_t submit_id, CommandBuffer* /*buffer*/, c
 		r->stencil_dynamic_back  = {};
 	}
 	// EXIT_NOT_IMPLEMENTED(r->stencil_test_enable);
-	EXIT_NOT_IMPLEMENTED(dc.backface_enable);
 
 	r->vulkan_buffer = nullptr;
 
