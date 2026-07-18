@@ -42,6 +42,8 @@ int      KYTY_SYSV_ABI NetRecv(int sock, void* buf, size_t len, int flags);
 bool     IsHostSocket(int fd);
 int      HostErrnoToPosix(int host_errno);
 int      HostSocketClose(int fd);
+int      HostSocketDup(int fd);
+int      HostSocketDup2(int oldfd, int newfd);
 int      KYTY_SYSV_ABI NetSysSocket(const char* name, int domain, int type, int protocol);
 int      KYTY_SYSV_ABI NetBind(int sock, const void* addr, uint32_t addrlen);
 int      KYTY_SYSV_ABI NetListen(int sock, int backlog);

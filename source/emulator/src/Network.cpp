@@ -1538,6 +1538,28 @@ int HostSocketClose(int fd)
 	return 0;
 }
 
+// POSIX dup() of a guest socket: the new host fd needs no registration (IsHostSocket
+// is a live getsockopt probe). Returns the new fd, or -posix_errno on failure.
+int HostSocketDup(int fd)
+{
+	int nfd = dup(fd);
+	return (nfd < 0 ? -HostErrnoToPosix(errno) : nfd);
+}
+
+// POSIX dup2(oldfd, newfd) between guest sockets: purge newfd from any epoll set
+// first (the sceNet epoll table is keyed by fd number). Returns 0, or -posix_errno.
+int HostSocketDup2(int oldfd, int newfd)
+{
+	epoll_forget_socket(newfd);
+
+	if (dup2(oldfd, newfd) < 0)
+	{
+		return -HostErrnoToPosix(errno);
+	}
+
+	return 0;
+}
+
 int KYTY_SYSV_ABI NetSysSocket(const char* name, int domain, int type, int protocol)
 {
 	PRINT_NAME();

@@ -25,6 +25,7 @@ namespace Kyty::Libs::LibKernel::FileSystem {
 LIB_NAME("libkernel", "libkernel");
 
 constexpr int DESCRIPTOR_MIN = 3;
+constexpr int DESCRIPTOR_MAX = 1024; // caps guest-driven dup2(fd, huge) table growth
 
 class MountPoints
 {
@@ -63,6 +64,7 @@ struct File
 	uint32_t                     dents_index;
 	std::atomic_int              open_flags {0}; // original guest open() flags, for fcntl F_GETFL
 	std::atomic_int              fd_flags {0};   // FD_CLOEXEC etc., for fcntl F_GETFD/F_SETFD
+	std::atomic_int              refs {0};       // open descriptors sharing this File (dup/dup2 aliasing)
 };
 
 class FileDescriptors
@@ -76,6 +78,7 @@ public:
 	int   CreateDescriptor();
 	void  DeleteDescriptor(int d);
 	bool  IsValidDescriptor(int d);
+	int   DuplicateDescriptor(int oldd, int newd); // newd<0 = dup (lowest free); newd>=0 = dup2
 	File* GetFile(int d);
 	File* GetFile(const String& real_name);
 	void  CloseAll();
@@ -101,6 +104,7 @@ int FileDescriptors::CreateDescriptor()
 	auto* file      = new File {};
 	file->opened    = false;
 	file->directory = false;
+	file->refs      = 1;
 
 	int files_num = static_cast<int>(m_files.Size());
 	for (int index = 0; index < files_num; index++)
@@ -116,6 +120,9 @@ int FileDescriptors::CreateDescriptor()
 	return static_cast<int>(m_files.Size()) + DESCRIPTOR_MIN - 1;
 }
 
+// Release one reference to the File at slot d. The host file is closed and the
+// File deleted only when the last alias (dup/dup2) is gone. Safe on a
+// never-opened File (KernelOpen failure paths): opened==false skips f.Close().
 void FileDescriptors::DeleteDescriptor(int d)
 {
 	Core::LockGuard lock(m_mutex);
@@ -124,10 +131,78 @@ void FileDescriptors::DeleteDescriptor(int d)
 
 	EXIT_IF(!m_files.IndexValid(index));
 	EXIT_IF(m_files.At(index) == nullptr);
-	EXIT_IF(m_files.At(index)->opened);
 
-	delete m_files.At(index);
+	File* f        = m_files.At(index);
 	m_files[index] = nullptr;
+
+	if (--f->refs == 0)
+	{
+		if (f->opened && !f->directory)
+		{
+			f->f.Close();
+		}
+		f->opened = false;
+		delete f;
+	}
+}
+
+int FileDescriptors::DuplicateDescriptor(int oldd, int newd)
+{
+	Core::LockGuard lock(m_mutex);
+
+	auto old_index = static_cast<uint32_t>(oldd - DESCRIPTOR_MIN);
+	EXIT_IF(!m_files.IndexValid(old_index) || m_files.At(old_index) == nullptr);
+
+	File* file = m_files.At(old_index);
+
+	if (newd < 0)
+	{
+		// dup: lowest free slot (POSIX lowest-fd), aliasing the same File
+		int files_num = static_cast<int>(m_files.Size());
+		for (int index = 0; index < files_num; index++)
+		{
+			if (m_files.At(index) == nullptr)
+			{
+				m_files[index] = file;
+				file->refs++;
+				return index + DESCRIPTOR_MIN;
+			}
+		}
+		m_files.Add(file);
+		file->refs++;
+		return static_cast<int>(m_files.Size()) + DESCRIPTOR_MIN - 1;
+	}
+
+	// dup2: place the alias at exactly new_index, growing the table as needed
+	auto new_index = static_cast<uint32_t>(newd - DESCRIPTOR_MIN);
+	while (m_files.Size() <= new_index)
+	{
+		m_files.Add(nullptr);
+	}
+
+	File* occ = m_files.At(new_index);
+	if (occ == file)
+	{
+		return newd; // target already aliases the source; nothing to do
+	}
+
+	// release any occupant of the target slot IN-LOCK (closes the open()-vs-dup2 race window)
+	if (occ != nullptr)
+	{
+		if (--occ->refs == 0)
+		{
+			if (occ->opened && !occ->directory)
+			{
+				occ->f.Close();
+			}
+			occ->opened = false;
+			delete occ;
+		}
+	}
+
+	m_files[new_index] = file;
+	file->refs++;
+	return newd;
 }
 
 File* FileDescriptors::GetFile(int d)
@@ -179,11 +254,19 @@ void FileDescriptors::CloseAll()
 
 	for (auto& f: m_files)
 	{
-		if (f != nullptr && f->opened)
+		if (f == nullptr)
 		{
-			f->f.Close();
-			delete f;
-			f = nullptr;
+			continue;
+		}
+		File* file = f;
+		f          = nullptr;
+		if (--file->refs == 0)
+		{
+			if (file->opened && !file->directory)
+			{
+				file->f.Close();
+			}
+			delete file;
 		}
 	}
 }
@@ -456,18 +539,96 @@ int KYTY_SYSV_ABI KernelClose(int d)
 
 	EXIT_IF(!file->opened);
 
-	if (!file->directory)
-	{
-		file->f.Close();
-	}
-
-	file->opened = false;
-
 	printf("\tClose: " FG_WHITE BOLD "%s" DEFAULT "\n", file->real_name.C_Str());
 
+	// DeleteDescriptor drops this alias's reference and closes the host file only
+	// when the last dup/dup2 alias is gone. Closing inline here would tear down
+	// the host file out from under a surviving alias.
 	g_files->DeleteDescriptor(d);
 
 	return OK;
+}
+
+int KYTY_SYSV_ABI KernelDup(int oldd)
+{
+	PRINT_NAME();
+
+	EXIT_IF(g_files == nullptr);
+
+	printf("\t oldd = %d\n", oldd);
+
+	if (oldd < DESCRIPTOR_MIN)
+	{
+		return KERNEL_ERROR_EBADF;
+	}
+
+	if (g_files->IsValidDescriptor(oldd))
+	{
+		return g_files->DuplicateDescriptor(oldd, -1);
+	}
+
+	if (Network::Net::IsHostSocket(oldd))
+	{
+		int fd = Network::Net::HostSocketDup(oldd);
+		return (fd < 0 ? KERNEL_ERROR_UNKNOWN + (-fd) : fd);
+	}
+
+	return KERNEL_ERROR_EBADF;
+}
+
+int KYTY_SYSV_ABI KernelDup2(int oldd, int newd)
+{
+	PRINT_NAME();
+
+	EXIT_IF(g_files == nullptr);
+
+	printf("\t oldd = %d, newd = %d\n", oldd, newd);
+
+	bool old_is_file = oldd >= DESCRIPTOR_MIN && g_files->IsValidDescriptor(oldd);
+	bool old_is_sock = !old_is_file && oldd >= DESCRIPTOR_MIN && Network::Net::IsHostSocket(oldd);
+
+	if (!old_is_file && !old_is_sock)
+	{
+		return KERNEL_ERROR_EBADF;
+	}
+
+	if (newd < DESCRIPTOR_MIN || newd >= DESCRIPTOR_MAX)
+	{
+		return KERNEL_ERROR_EBADF;
+	}
+
+	if (newd == oldd)
+	{
+		return newd; // POSIX self-dup no-op, AFTER validation
+	}
+
+	if (old_is_file)
+	{
+		// dup2 closes newd first; if it names a socket, purge+close it via the host
+		if (!g_files->IsValidDescriptor(newd) && Network::Net::IsHostSocket(newd))
+		{
+			int perr = Network::Net::HostSocketClose(newd);
+			if (perr != 0)
+			{
+				return KERNEL_ERROR_UNKNOWN + perr;
+			}
+		}
+		return g_files->DuplicateDescriptor(oldd, newd);
+	}
+
+	// old is a socket
+	if (g_files->IsValidDescriptor(newd))
+	{
+		// a virtual g_files number cannot become a raw host fd
+		return KERNEL_ERROR_ENOTSUP;
+	}
+	if (!Network::Net::IsHostSocket(newd))
+	{
+		// refuse arbitrary numbers: host dup2 there would clobber an emulator-internal fd
+		return KERNEL_ERROR_EBADF;
+	}
+	int r = Network::Net::HostSocketDup2(oldd, newd);
+	return (r < 0 ? KERNEL_ERROR_UNKNOWN + (-r) : newd);
 }
 
 int64_t KYTY_SYSV_ABI KernelRead(int d, void* buf, size_t nbytes)

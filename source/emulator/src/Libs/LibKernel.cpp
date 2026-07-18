@@ -336,19 +336,18 @@ static KYTY_SYSV_ABI int pipe(int* /*fds*/)
 	return -1;
 }
 
-static KYTY_SYSV_ABI int dup(int /*fd*/)
+static KYTY_SYSV_ABI int dup(int oldfd)
 {
 	PRINT_NAME();
 
-	*Posix::GetErrorAddr() = Posix::POSIX_EBADF;
-	return -1;
+	return POSIX_N_CALL(FileSystem::KernelDup(oldfd));
 }
 
-static KYTY_SYSV_ABI int dup2(int /*oldfd*/, int newfd)
+static KYTY_SYSV_ABI int dup2(int oldfd, int newfd)
 {
 	PRINT_NAME();
 
-	return newfd;
+	return POSIX_N_CALL(FileSystem::KernelDup2(oldfd, newfd));
 }
 
 static KYTY_SYSV_ABI int wait4(int /*pid*/, int* /*status*/, int /*options*/, void* /*rusage*/)
@@ -1246,7 +1245,8 @@ LIB_DEFINE(InitLibKernel_1)
 	LIB_FUNC("-3nj+K1elI0", LibKernel::execve);
 	LIB_FUNC("-Jp7F+pXxNg", LibKernel::pipe);
 	LIB_FUNC("iiQjzvfWDq0", LibKernel::dup);
-	LIB_FUNC("W8f1adVl+48", LibKernel::dup2);
+	LIB_FUNC("W8f1adVl+48", LibKernel::dup2);   // _dup2 (libc static wrapper)
+	LIB_FUNC("wdUufa9g-D8", LibKernel::dup2);   // plain dup2 (direct libkernel export)
 	LIB_FUNC("RFlsu7nfopM", LibKernel::wait4);
 	LIB_FUNC("lZzFeSxPl08", Posix::pthread_setcancelstate);
 	LIB_FUNC("nYBrkGDqxh8", Posix::pthread_testcancel);
