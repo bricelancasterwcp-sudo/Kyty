@@ -1289,6 +1289,18 @@ void GpuMemory::Free(GraphicContext* ctx, uint64_t vaddr, uint64_t size, bool un
 
 	int heap_id = GetHeapId(vaddr, size);
 
+	// The post-run cleanup path (GraphicsRenderMemoryFree, unmap == false)
+	// releases GPU objects backed by a just-executed command buffer. A
+	// compute ring that wraps runs from a host-side join buffer, not guest
+	// memory, so its address is in no registered heap — there is simply
+	// nothing to release. Only a real guest unmap (unmap == true) treats a
+	// missing heap as a bug.
+	if (heap_id < 0 && !unmap)
+	{
+		m_mutex.Unlock();
+		return;
+	}
+
 	EXIT_NOT_IMPLEMENTED(heap_id < 0);
 
 	auto object_ids = FindBlocks(heap_id, &vaddr, &size, 1);
