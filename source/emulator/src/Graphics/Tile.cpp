@@ -1222,7 +1222,7 @@ void TileGetTextureSize(uint32_t dfmt, uint32_t nfmt, uint32_t width, uint32_t h
 
 	FindTextureInfo(dfmt, nfmt, width, height, pitch, tile, neo, &infos, &num, pow2);
 
-	EXIT_NOT_IMPLEMENTED(tile != 31 && tile != 8 && infos == nullptr);
+	EXIT_NOT_IMPLEMENTED(tile != 31 && tile != 8 && tile != 14 && infos == nullptr);
 
 	EXIT_IF(levels == 0 || levels > 16);
 
@@ -1264,6 +1264,58 @@ void TileGetTextureSize(uint32_t dfmt, uint32_t nfmt, uint32_t width, uint32_t h
 			}
 			return;
 		}
+	}
+
+	if (tile == 14 && levels == 1)
+	{
+		// 2D-thin runtime size fallback for shapes not in the pow2 table (NPOT).
+		// Pad law and base align verified per-texel and per-size against
+		// freegnm's production tiler (cbtest/tiling-oracle xcheck, base+neo):
+		// pitch pads to the 32bpp macro-tile width (128 base+neo), height to
+		// the macro-tile height (base 64, neo 128); align = one macro tile.
+		uint64_t size = 0;
+
+		if (dfmt == 10 && (nfmt == 0 || nfmt == 9))
+		{
+			uint64_t macro_height  = (neo ? 128 : 64);
+			uint64_t padded_pitch  = ((pitch + 127) / 128) * 128;
+			uint64_t padded_height = ((height + macro_height - 1) / macro_height) * macro_height;
+			size                   = padded_pitch * padded_height * 4;
+		}
+
+		if (size != 0)
+		{
+			EXIT_IF(size > UINT32_MAX);
+
+			if (total_size != nullptr)
+			{
+				total_size->size  = static_cast<uint32_t>(size);
+				total_size->align = (neo ? 65536 : 32768);
+			}
+			if (level_sizes != nullptr)
+			{
+				level_sizes[0].size   = static_cast<uint32_t>(size);
+				level_sizes[0].offset = 0;
+			}
+			if (padded_size != nullptr)
+			{
+				// Same convention as the tile-14 table entries: padding is
+				// computed by Tiler2dThin itself, not reported here.
+				padded_size[0].width  = 0;
+				padded_size[0].height = 0;
+			}
+			return;
+		}
+	}
+
+	if (tile == 14)
+	{
+		// No table entry and no runtime law for this 2D-thin shape (BC/other
+		// dfmt, or levels > 1 off the table). Fail loud regardless of which
+		// outputs the caller asked for — level_sizes-only callers would
+		// otherwise get silent zeros.
+		EXIT("tile-14 unknown shape: dfmt = %u, nfmt = %u, width = %u, height = %u, pitch = %u, levels = %u, neo = %s\n", dfmt, nfmt,
+		     width, height, pitch, levels, neo ? "true" : "false");
 	}
 
 	if ((tile == 8 || tile == 31) && levels == 1)
