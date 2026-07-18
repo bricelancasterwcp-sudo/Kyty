@@ -53,6 +53,22 @@ static VkFormat get_texture_format(uint32_t dfmt, uint32_t nfmt, uint32_t fmt)
 		{
 			return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
 		}
+		if (nfmt == 0 && dfmt == 38)
+		{
+			return VK_FORMAT_BC4_UNORM_BLOCK;
+		}
+		if (nfmt == 0 && dfmt == 39)
+		{
+			return VK_FORMAT_BC5_UNORM_BLOCK;
+		}
+		if (nfmt == 9 && dfmt == 41)
+		{
+			return VK_FORMAT_BC7_SRGB_BLOCK;
+		}
+		if (nfmt == 0 && dfmt == 41)
+		{
+			return VK_FORMAT_BC7_UNORM_BLOCK;
+		}
 		if (nfmt == 7 && dfmt == 14)
 		{
 			return VK_FORMAT_R32G32B32A32_SFLOAT;

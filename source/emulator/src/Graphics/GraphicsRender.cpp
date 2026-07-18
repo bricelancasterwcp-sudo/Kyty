@@ -4264,7 +4264,7 @@ static void PrepareTextures(uint64_t submit_id, CommandBuffer* buffer, const Sha
 		} else
 		{
 			EXIT_NOT_IMPLEMENTED(r.Dfmt() != 1 && r.Dfmt() != 10 && r.Dfmt() != 37 && r.Dfmt() != 4 && r.Dfmt() != 35 && r.Dfmt() != 3 &&
-			                     r.Dfmt() != 36 && r.Dfmt() != 14);
+			                     r.Dfmt() != 36 && r.Dfmt() != 14 && r.Dfmt() != 38 && r.Dfmt() != 39 && r.Dfmt() != 41);
 			EXIT_NOT_IMPLEMENTED(r.Nfmt() != 9 && r.Nfmt() != 0 && r.Nfmt() != 7);
 			EXIT_NOT_IMPLEMENTED(r.PerfMod() != 7 && r.PerfMod() != 0);
 			EXIT_NOT_IMPLEMENTED(r.Interlaced() != false);
