@@ -23,6 +23,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <string>
+#include <strings.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <vector>
@@ -623,8 +624,9 @@ static int Perform(const Config& cfg, Result* out)
 	if (cfg.http_ver == 1)
 	{
 		curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_0);
-	} else if (cfg.http_ver == 2)
+	} else
 	{
+		// real sceHttp speaks HTTP/1.1 at most - never let curl negotiate h2
 		curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
 	}
 	if (cfg.connect_timeout_usec != 0)
@@ -729,7 +731,7 @@ int Network::HttpSendRequest(Id req_id, const void* post_data, size_t post_size)
 		}
 	}
 
-	bool is_https = (cfg.url.rfind("https", 0) == 0 || cfg.url.rfind("HTTPS", 0) == 0);
+	bool is_https = (cfg.url.size() >= 5 && strncasecmp(cfg.url.c_str(), "https", 5) == 0);
 
 	HttpTransfer::Result res;
 
