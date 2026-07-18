@@ -16,8 +16,8 @@ struct FileStat
 {
 	uint32_t       st_dev;
 	uint32_t       st_ino;
-	uint16_t       st_mode;
-	uint16_t       st_nlink;
+	uint32_t       st_mode; // FreeBSD mode_t is 4 bytes; a uint16 here mis-aligned st_size onwards
+	uint32_t       st_nlink; // FreeBSD nlink_t is 4 bytes
 	uint32_t       st_uid;
 	uint32_t       st_gid;
 	uint32_t       st_rdev;
@@ -57,6 +57,11 @@ int64_t KYTY_SYSV_ABI KernelWritev(int d, const KernelIovec* iov, int iovcnt);
 int64_t KYTY_SYSV_ABI KernelPwrite(int d, const void* buf, size_t nbytes, int64_t offset);
 int64_t KYTY_SYSV_ABI KernelLseek(int d, int64_t offset, int whence);
 int KYTY_SYSV_ABI     KernelStat(const char* path, FileStat* sb);
+int KYTY_SYSV_ABI     KernelAccess(const char* path, int mode);
+int KYTY_SYSV_ABI     KernelFsync(int d);
+int KYTY_SYSV_ABI     KernelFtruncate(int d, int64_t length);
+int KYTY_SYSV_ABI     KernelFcntl(int d, int cmd, int64_t arg);
+int KYTY_SYSV_ABI     KernelGetcwd(char* buf, size_t size);
 int KYTY_SYSV_ABI     KernelFstat(int d, FileStat* sb);
 int KYTY_SYSV_ABI     KernelUnlink(const char* path);
 int KYTY_SYSV_ABI     KernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep);

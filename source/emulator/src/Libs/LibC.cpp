@@ -8,6 +8,8 @@
 #include "Kyty/Core/VirtualMemory.h"
 
 #include "Emulator/Common.h"
+#include "Emulator/Kernel/FileSystem.h"
+#include "Emulator/Libs/Errno.h"
 #include "Emulator/Libs/Libs.h"
 #include "Emulator/Libs/Printf.h"
 #include "Emulator/Libs/VaContext.h"
@@ -396,9 +398,26 @@ void* KYTY_SYSV_ABI LibcMspaceMemalign(void* msp, size_t boundary, size_t size)
 	return buf;
 }
 
+// libSceLibcInternal is the only firmware module that exports getcwd; the guest
+// working directory is permanently "/" (Kyty resolves paths via mount points).
+static char* KYTY_SYSV_ABI getcwd(char* buf, size_t size)
+{
+	PRINT_NAME();
+
+	int r = LibKernel::FileSystem::KernelGetcwd(buf, size);
+	if (r != OK)
+	{
+		*Posix::GetErrorAddr() = LibKernel::KernelToPosix(r);
+		return nullptr;
+	}
+	return buf;
+}
+
 LIB_DEFINE(InitLibcInternal_1)
 {
 	LibcInternalExt::InitLibcInternalExt_1(s);
+
+	LIB_FUNC("DYivN1nO-JQ", LibcInternal::getcwd);
 
 	LIB_OBJECT("ZT4ODD2Ts9o", &LibcInternal::g_need_flag);
 	LIB_OBJECT("2sWzhYqFH4E", stdout);

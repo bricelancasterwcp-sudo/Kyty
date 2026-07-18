@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cerrno>
 #include <climits>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -60,6 +61,8 @@ struct File
 	Core::Mutex                  mutex;
 	Vector<Core::File::DirEntry> dents;
 	uint32_t                     dents_index;
+	std::atomic_int              open_flags {0}; // original guest open() flags, for fcntl F_GETFL
+	std::atomic_int              fd_flags {0};   // FD_CLOEXEC etc., for fcntl F_GETFD/F_SETFD
 };
 
 class FileDescriptors
@@ -344,8 +347,10 @@ int KYTY_SYSV_ABI KernelOpen(const char* path, int flags, uint16_t mode)
 
 	EXIT_IF(file == nullptr || file->opened || file->directory);
 
-	file->name      = path;
-	file->real_name = (directory ? g_mount_points->GetRealDirectory(file->name) : g_mount_points->GetRealFilename(file->name));
+	file->name       = path;
+	file->open_flags = flags; // keep the original guest flags for fcntl(F_GETFL)
+	file->fd_flags   = 0;
+	file->real_name  = (directory ? g_mount_points->GetRealDirectory(file->name) : g_mount_points->GetRealFilename(file->name));
 
 	if (trunc && rw_mode == Core::File::Mode::Read)
 	{
@@ -898,6 +903,265 @@ int KYTY_SYSV_ABI KernelStat(const char* path, FileStat* sb)
 	return OK;
 }
 
+int KYTY_SYSV_ABI KernelAccess(const char* path, int mode)
+{
+	PRINT_NAME();
+
+	EXIT_IF(g_mount_points == nullptr);
+
+	if (path == nullptr)
+	{
+		return KERNEL_ERROR_EINVAL;
+	}
+
+	// F_OK(0) or an OR of R_OK(4)|W_OK(2)|X_OK(1); any other bit is invalid (FreeBSD)
+	if ((static_cast<uint32_t>(mode) & ~0x7u) != 0)
+	{
+		return KERNEL_ERROR_EINVAL;
+	}
+
+	printf("\t KernelAccess: %s, mode = %d\n", path, mode);
+
+	String path_s         = String::FromUtf8(path);
+	auto   real_file_name = g_mount_points->GetRealFilename(path_s);
+	auto   real_directory = g_mount_points->GetRealDirectory(path_s);
+
+	bool is_dir  = Core::File::IsDirectoryExisting(real_file_name) || Core::File::IsDirectoryExisting(real_directory);
+	bool is_file = Core::File::IsFileExisting(real_file_name);
+
+	if (!is_dir && !is_file)
+	{
+		printf("\t file not found\n");
+		return KERNEL_ERROR_ENOENT;
+	}
+
+	// KernelStat reports st_mode 0777 for every existing path, so access grants
+	// R/W/X consistently (existence check). A real host-permission failure still
+	// surfaces later at KernelOpen.
+	return OK;
+}
+
+int KYTY_SYSV_ABI KernelFsync(int d)
+{
+	PRINT_NAME();
+
+	EXIT_IF(g_files == nullptr);
+
+	if (d < DESCRIPTOR_MIN)
+	{
+		return KERNEL_ERROR_EPERM;
+	}
+
+	// IsValidDescriptor (not GetFile) first: an unknown fd must be EBADF, not
+	// GetFile()'s EXIT_IF abort on an out-of-range index. A socket has no host
+	// buffer to flush, so fsync on one is a no-op success.
+	if (!g_files->IsValidDescriptor(d))
+	{
+		if (Network::Net::IsHostSocket(d))
+		{
+			return OK;
+		}
+		return KERNEL_ERROR_EBADF;
+	}
+
+	auto* file = g_files->GetFile(d);
+
+	if (file == nullptr)
+	{
+		return KERNEL_ERROR_EBADF;
+	}
+
+	if (file->directory)
+	{
+		return OK;
+	}
+
+	EXIT_IF(!file->opened);
+
+	file->mutex.Lock();
+	bool is_invalid = file->f.IsInvalid();
+	if (!is_invalid)
+	{
+		file->f.Flush();
+	}
+	file->mutex.Unlock();
+
+	if (is_invalid)
+	{
+		return KERNEL_ERROR_EIO;
+	}
+
+	return OK;
+}
+
+int KYTY_SYSV_ABI KernelFtruncate(int d, int64_t length)
+{
+	PRINT_NAME();
+
+	EXIT_IF(g_files == nullptr);
+
+	if (d < DESCRIPTOR_MIN)
+	{
+		return KERNEL_ERROR_EPERM;
+	}
+
+	if (length < 0)
+	{
+		return KERNEL_ERROR_EINVAL;
+	}
+
+	// ftruncate on a socket is EINVAL (FreeBSD); an unknown fd is EBADF. Guard
+	// with IsValidDescriptor so an out-of-range fd never reaches GetFile's abort.
+	if (!g_files->IsValidDescriptor(d))
+	{
+		if (Network::Net::IsHostSocket(d))
+		{
+			return KERNEL_ERROR_EINVAL;
+		}
+		return KERNEL_ERROR_EBADF;
+	}
+
+	auto* file = g_files->GetFile(d);
+
+	if (file == nullptr)
+	{
+		return KERNEL_ERROR_EBADF;
+	}
+
+	if (file->directory)
+	{
+		return KERNEL_ERROR_EISDIR;
+	}
+
+	EXIT_IF(!file->opened);
+
+	file->mutex.Lock();
+	bool is_invalid = file->f.IsInvalid();
+	bool ok         = false;
+	if (!is_invalid)
+	{
+		// Truncate does not move the stream position (fflush + ftruncate),
+		// so the guest's file offset is preserved across the call.
+		ok = file->f.Truncate(static_cast<uint64_t>(length));
+	}
+	file->mutex.Unlock();
+
+	if (is_invalid)
+	{
+		return KERNEL_ERROR_EIO;
+	}
+	if (!ok)
+	{
+		// e.g. a read-only descriptor: host ftruncate fails with EINVAL
+		return KERNEL_ERROR_EINVAL;
+	}
+
+	return OK;
+}
+
+int KYTY_SYSV_ABI KernelFcntl(int d, int cmd, int64_t arg)
+{
+	PRINT_NAME();
+
+	EXIT_IF(g_files == nullptr);
+
+	printf("\t fd = %d, cmd = %d, arg = 0x%016" PRIx64 "\n", d, cmd, arg);
+
+	// FreeBSD/OpenOrbis fcntl command numbers
+	constexpr int GUEST_F_DUPFD = 0;
+	constexpr int GUEST_F_GETFD = 1;
+	constexpr int GUEST_F_SETFD = 2;
+	constexpr int GUEST_F_GETFL = 3;
+	constexpr int GUEST_F_SETFL = 4;
+	constexpr int GUEST_O_NONBLOCK = 0x4;
+
+	if (d < DESCRIPTOR_MIN)
+	{
+		return KERNEL_ERROR_EBADF;
+	}
+
+	// Socket fds: route the nonblock-relevant commands to the host, keep the
+	// rest as benign successes. File fds fall through to g_files below.
+	if (!g_files->IsValidDescriptor(d))
+	{
+		if (!Network::Net::IsHostSocket(d))
+		{
+			return KERNEL_ERROR_EBADF;
+		}
+
+		int hostfl = ::fcntl(d, F_GETFL, 0);
+		switch (cmd)
+		{
+			case GUEST_F_GETFL:
+				return ((hostfl & O_NONBLOCK) != 0 ? GUEST_O_NONBLOCK : 0);
+			case GUEST_F_SETFL:
+			{
+				int newfl = ((arg & GUEST_O_NONBLOCK) != 0 ? (hostfl | O_NONBLOCK) : (hostfl & ~O_NONBLOCK));
+				if (::fcntl(d, F_SETFL, newfl) < 0)
+				{
+					return KERNEL_ERROR_UNKNOWN + Network::Net::HostErrnoToPosix(errno);
+				}
+				return OK;
+			}
+			case GUEST_F_GETFD:
+			case GUEST_F_SETFD: return OK;
+			default: return KERNEL_ERROR_EINVAL;
+		}
+	}
+
+	auto* file = g_files->GetFile(d);
+
+	if (file == nullptr)
+	{
+		return KERNEL_ERROR_EBADF;
+	}
+
+	switch (cmd)
+	{
+		case GUEST_F_GETFL:
+			// access mode + status flags only; FreeBSD F_GETFL does not report the
+			// creation flags (O_CREAT 0x200 / O_TRUNC 0x400 / O_EXCL 0x800 / O_DIRECTORY 0x20000)
+			return file->open_flags & ~0x20e00;
+		case GUEST_F_SETFL:
+			// only the mutable status flags (O_NONBLOCK/O_APPEND) can be set;
+			// they are no-ops on a regular file but must round-trip via F_GETFL
+			file->open_flags = static_cast<int>((file->open_flags & 0x3) | (arg & ~0x3));
+			return OK;
+		case GUEST_F_GETFD: return file->fd_flags;
+		case GUEST_F_SETFD:
+			file->fd_flags = static_cast<int>(arg);
+			return OK;
+		case GUEST_F_DUPFD:
+			// duplicating a file descriptor needs the fd-aliasing refactor;
+			// not yet supported for file fds
+			return KERNEL_ERROR_EINVAL;
+		default: return KERNEL_ERROR_EINVAL;
+	}
+}
+
+int KYTY_SYSV_ABI KernelGetcwd(char* buf, size_t size)
+{
+	PRINT_NAME();
+
+	// Kyty has no cwd state: chdir is a no-op and path resolution is mount-point
+	// based, so the title-visible working directory is permanently "/".
+	static constexpr char CWD[] = "/";
+
+	if (buf == nullptr || size == 0)
+	{
+		return KERNEL_ERROR_EINVAL;
+	}
+	if (size < sizeof(CWD))
+	{
+		return KERNEL_ERROR_ERANGE;
+	}
+
+	printf("\t cwd = %s\n", CWD);
+	memcpy(buf, CWD, sizeof(CWD));
+
+	return OK;
+}
+
 int KYTY_SYSV_ABI KernelFstat(int d, FileStat* sb)
 {
 	PRINT_NAME();
@@ -912,6 +1176,19 @@ int KYTY_SYSV_ABI KernelFstat(int d, FileStat* sb)
 	if (sb == nullptr)
 	{
 		return KERNEL_ERROR_EFAULT;
+	}
+
+	// IsValidDescriptor before GetFile: an fstat on a socket fd or an unknown fd
+	// must not reach GetFile's EXIT_IF abort on an out-of-range index.
+	if (!g_files->IsValidDescriptor(d))
+	{
+		if (Network::Net::IsHostSocket(d))
+		{
+			memset(sb, 0, sizeof(FileStat));
+			sb->st_mode = 0000777u | 0140000u; // S_IFSOCK
+			return OK;
+		}
+		return KERNEL_ERROR_EBADF;
 	}
 
 	auto* file = g_files->GetFile(d);

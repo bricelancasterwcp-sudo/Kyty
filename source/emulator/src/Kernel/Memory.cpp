@@ -732,6 +732,12 @@ int KYTY_SYSV_ABI KernelMapDirectMemory(void** addr, size_t len, int prot, int f
 		{
 			out_addr = in_addr;
 		}
+	} else if (alignment == 0)
+	{
+		// no alignment constraint: let the allocator pick the address (mirrors
+		// KernelMapNamedFlexibleMemory's in_addr==0 path). AllocAligned would
+		// compute (in_addr & (alignment-1)) and underflow with alignment==0.
+		out_addr = VirtualMemory::Alloc(in_addr, len, mode);
 	} else
 	{
 		out_addr = VirtualMemory::AllocAligned(in_addr, len, mode, alignment);
@@ -745,8 +751,6 @@ int KYTY_SYSV_ABI KernelMapDirectMemory(void** addr, size_t len, int prot, int f
 	printf("\t mode     = %s\n", Core::EnumName(mode).C_Str());
 	printf("\t align    = 0x%016" PRIx64 "\n", alignment);
 	printf("\t gpu_mode = %s\n", Core::EnumName(gpu_mode).C_Str());
-
-	EXIT_NOT_IMPLEMENTED(out_addr == 0);
 
 	if (out_addr == 0)
 	{
@@ -840,6 +844,46 @@ int KYTY_SYSV_ABI KernelAvailableFlexibleMemorySize(size_t* size)
 	return OK;
 }
 
+// Decode an SCE protection bitmask into CPU + GPU modes. Bits: CPU read 0x1,
+// write 0x2, exec 0x4; GPU read 0x10, write 0x20. Returns false if any bit
+// outside that mask is set. Mode's enumerators are Read=1/Write=2/Execute=4 so
+// the CPU bits OR straight into a valid Mode value.
+static bool ProtToModes(int prot, VirtualMemory::Mode* mode, Graphics::GpuMemoryMode* gpu_mode)
+{
+	if ((prot & ~0x37) != 0)
+	{
+		return false;
+	}
+
+	uint32_t cpu = 0;
+	if ((prot & 0x1) != 0)
+	{
+		cpu |= static_cast<uint32_t>(VirtualMemory::Mode::Read);
+	}
+	if ((prot & 0x2) != 0)
+	{
+		cpu |= static_cast<uint32_t>(VirtualMemory::Mode::Write);
+	}
+	if ((prot & 0x4) != 0)
+	{
+		cpu |= static_cast<uint32_t>(VirtualMemory::Mode::Execute);
+	}
+	*mode = static_cast<VirtualMemory::Mode>(cpu);
+
+	if ((prot & 0x20) != 0)
+	{
+		*gpu_mode = Graphics::GpuMemoryMode::ReadWrite;
+	} else if ((prot & 0x10) != 0)
+	{
+		*gpu_mode = Graphics::GpuMemoryMode::Read;
+	} else
+	{
+		*gpu_mode = Graphics::GpuMemoryMode::NoAccess;
+	}
+
+	return true;
+}
+
 int KYTY_SYSV_ABI KernelMprotect(const void* addr, size_t len, int prot)
 {
 	PRINT_NAME();
@@ -852,17 +896,10 @@ int KYTY_SYSV_ABI KernelMprotect(const void* addr, size_t len, int prot)
 	VirtualMemory::Mode     mode     = VirtualMemory::Mode::NoAccess;
 	Graphics::GpuMemoryMode gpu_mode = Graphics::GpuMemoryMode::NoAccess;
 
-	switch (prot)
+	if (!ProtToModes(prot, &mode, &gpu_mode))
 	{
-		case 0x11:
-			mode     = VirtualMemory::Mode::Read;
-			gpu_mode = Graphics::GpuMemoryMode::Read;
-			break;
-		case 0x12:
-			mode     = VirtualMemory::Mode::ReadWrite;
-			gpu_mode = Graphics::GpuMemoryMode::Read;
-			break;
-		default: EXIT("unknown prot: %d\n", prot);
+		printf("\t unknown prot: 0x%x\n", static_cast<unsigned>(prot));
+		return KERNEL_ERROR_EINVAL;
 	}
 
 	VirtualMemory::Mode old_mode {};

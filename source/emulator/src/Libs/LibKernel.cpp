@@ -230,12 +230,7 @@ static KYTY_SYSV_ABI int fcntl(int fd, int cmd, void* arg)
 {
 	PRINT_NAME();
 
-	printf("\t fd  = %d\n", fd);
-	printf("\t cmd = %d\n", cmd);
-	printf("\t arg = %016" PRIx64 "\n", reinterpret_cast<uint64_t>(arg));
-
-	// File locking / descriptor flags are not modeled; pretend success
-	return 0;
+	return POSIX_N_CALL(LibKernel::FileSystem::KernelFcntl(fd, cmd, reinterpret_cast<int64_t>(arg)));
 }
 
 static KYTY_SYSV_ABI int ioctl(int fd, uint64_t request, void* argp)
@@ -787,6 +782,45 @@ int KYTY_SYSV_ABI stat(const char* path, LibKernel::FileSystem::FileStat* sb)
 	return POSIX_CALL(LibKernel::FileSystem::KernelStat(path, sb));
 }
 
+int KYTY_SYSV_ABI lstat(const char* path, LibKernel::FileSystem::FileStat* sb)
+{
+	PRINT_NAME();
+
+	// Kyty's VFS never surfaces symlinks to the guest (mount translation +
+	// Core::File resolve host links transparently, and there is no symlink HLE),
+	// so lstat is identical to stat for every guest-reachable path.
+	return POSIX_CALL(LibKernel::FileSystem::KernelStat(path, sb));
+}
+
+int KYTY_SYSV_ABI access(const char* path, int mode)
+{
+	PRINT_NAME();
+
+	return POSIX_CALL(LibKernel::FileSystem::KernelAccess(path, mode));
+}
+
+int KYTY_SYSV_ABI fsync(int d)
+{
+	PRINT_NAME();
+
+	return POSIX_CALL(LibKernel::FileSystem::KernelFsync(d));
+}
+
+int KYTY_SYSV_ABI fdatasync(int d)
+{
+	PRINT_NAME();
+
+	// buffered-flush model: fdatasync == fsync here
+	return POSIX_CALL(LibKernel::FileSystem::KernelFsync(d));
+}
+
+int KYTY_SYSV_ABI ftruncate(int d, int64_t length)
+{
+	PRINT_NAME();
+
+	return POSIX_CALL(LibKernel::FileSystem::KernelFtruncate(d, length));
+}
+
 void* KYTY_SYSV_ABI mmap(void* addr, size_t len, int prot, int flags, int fd, int64_t offset)
 {
 	PRINT_NAME();
@@ -998,6 +1032,18 @@ LIB_DEFINE(InitLibKernel_1_FS)
 	LIB_FUNC("JGMio+21L4c", Posix::mkdir);
 	LIB_FUNC("VAzswvTOCzI", Posix::unlink);
 	LIB_FUNC("NN01qLRhiqU", Posix::rename);
+	// POSIX file syscalls imported from the "libkernel" library (like stat/open above)
+	LIB_FUNC("DRGXpDDh8Ng", Posix::lstat);
+	LIB_FUNC("8vE6Z6VEYyk", Posix::access);
+	LIB_FUNC("juWbTNM+8hw", Posix::fsync);
+	LIB_FUNC("KIbJFQ0I1Cg", Posix::fdatasync);
+	LIB_FUNC("ih4CD9-gghM", Posix::ftruncate);
+	LIB_FUNC("8nY19bKoiZk", LibKernel::fcntl); // plain 'fcntl' dynamic export (POSIX-style)
+	// sce-flavor twins (raw SCE error return)
+	LIB_FUNC("fTx66l5iWIA", FileSystem::KernelFsync);      // sceKernelFsync
+	LIB_FUNC("30Rh4ixbKy4", FileSystem::KernelFsync);      // sceKernelFdatasync
+	LIB_FUNC("VW3TVZiM4-E", FileSystem::KernelFtruncate);  // sceKernelFtruncate
+	LIB_FUNC("SoZkxZkCHaw", FileSystem::KernelFcntl);      // sceKernelFcntl
 
 	// POSIX socket API imported from libkernel. socket() is a libc wrapper over
 	// __sys_socketex; bind/listen/accept are direct libkernel exports. The
