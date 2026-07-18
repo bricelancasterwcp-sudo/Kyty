@@ -3169,7 +3169,24 @@ KYTY_SHADER_PARSER(shader_parse_mimg)
 		case 0x21: KYTY_NI("image_sample_cl"); break;
 		case 0x22: KYTY_NI("image_sample_d"); break;
 		case 0x23: KYTY_NI("image_sample_d_cl"); break;
-		case 0x24: KYTY_NI("image_sample_l"); break;
+		case 0x24:
+			// image_sample_l: explicit LOD in the LAST vaddr register, after the
+			// coordinates (GCN ISA), so it shares ImageSampleLz's operand shape.
+			inst.type        = ShaderInstructionType::ImageSampleL;
+			inst.src[0].size = 3;
+			inst.src[1].size = 8;
+			inst.src[2].size = 4;
+			switch (dmask) // NOLINT
+			{
+				case 0x7:
+				{
+					inst.format   = ShaderInstructionFormat::Vdata3Vaddr3StSsDmask7;
+					inst.dst.size = 3;
+					break;
+				}
+				default:;
+			}
+			break;
 		case 0x25: KYTY_NI("image_sample_b"); break;
 		case 0x26: KYTY_NI("image_sample_b_cl"); break;
 		case 0x27:

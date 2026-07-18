@@ -56,6 +56,7 @@ enum class ShaderInstructionType : uint32_t
 	Exp,
 	ImageLoad,
 	ImageSample,
+	ImageSampleL,
 	ImageSampleLz,
 	ImageSampleLzO,
 	ImageStore,
