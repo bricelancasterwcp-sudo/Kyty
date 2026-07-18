@@ -34,8 +34,10 @@ enum class ShaderInstructionType : uint32_t
 {
 	Unknown,
 
+	BufferAtomicAdd,
 	BufferLoadDword,
 	BufferLoadDwordx2,
+	BufferLoadDwordx3,
 	BufferLoadDwordx4,
 	BufferLoadFormatX,
 	BufferLoadFormatXy,
@@ -43,6 +45,7 @@ enum class ShaderInstructionType : uint32_t
 	BufferLoadFormatXyzw,
 	BufferStoreDword,
 	BufferStoreDwordx2,
+	BufferStoreDwordx3,
 	BufferStoreDwordx4,
 	BufferStoreFormatX,
 	BufferStoreFormatXy,

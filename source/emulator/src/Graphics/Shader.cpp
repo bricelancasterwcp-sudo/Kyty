@@ -802,7 +802,12 @@ static void cs_check(const HW::CsStageRegisters& cs, const HW::ShaderRegisters& 
 	EXIT_NOT_IMPLEMENTED(cs.tgid_x_en != 0x01);
 	// EXIT_NOT_IMPLEMENTED(cs.tgid_y_en != 0x00);
 	// EXIT_NOT_IMPLEMENTED(cs.tgid_z_en != 0x00);
-	EXIT_NOT_IMPLEMENTED(cs.tg_size_en != 0x00);
+	// TG_SIZE_EN: the CP preloads a packed workgroup-size dword into the SGPR
+	// after the tgid SGPRs. A kernel that sets it but never reads it is fine —
+	// the (undeclared/undefined) SGPR is never loaded. A kernel that actually
+	// READS tg_size with all three tgid dims enabled would need it seeded and
+	// the FindVariables SGPR window widened (workgroup_register+3 is currently
+	// outside the 3-wide window); not yet supported.
 	EXIT_NOT_IMPLEMENTED(cs.tidig_comp_cnt > 2);
 	// LDS is supported: cs.lds_size (COMPUTE_PGM_RSRC2.LDS_SIZE, granules of
 	// 64 dwords) drives the SPIR-V Workgroup array size (see ShaderGetInputInfoCS).

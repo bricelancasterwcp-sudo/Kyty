@@ -2689,7 +2689,12 @@ KYTY_SHADER_PARSER(shader_parse_mubuf)
 			inst.src[1].size = 4;
 			inst.dst.size    = 4;
 			break;
-		case 0x0F: KYTY_NI("buffer_load_dwordx3"); break;
+		case 0x0F:
+			inst.type        = ShaderInstructionType::BufferLoadDwordx3;
+			inst.format      = ShaderInstructionFormat::Vdata3VaddrSvSoffsIdxen;
+			inst.src[1].size = 4;
+			inst.dst.size    = 3;
+			break;
 		case 0x18: KYTY_NI("buffer_store_byte"); break;
 		case 0x1A: KYTY_NI("buffer_store_short"); break;
 		case 0x1c:
@@ -2709,10 +2714,21 @@ KYTY_SHADER_PARSER(shader_parse_mubuf)
 			inst.src[1].size = 4;
 			inst.dst.size    = 4;
 			break;
-		case 0x1F: KYTY_NI("buffer_store_dwordx3"); break;
+		case 0x1F:
+			inst.type        = ShaderInstructionType::BufferStoreDwordx3;
+			inst.format      = ShaderInstructionFormat::Vdata3VaddrSvSoffsIdxen;
+			inst.src[1].size = 4;
+			inst.dst.size    = 3;
+			break;
 		case 0x30: KYTY_NI("buffer_atomic_swap"); break;
 		case 0x31: KYTY_NI("buffer_atomic_cmpswap"); break;
-		case 0x32: KYTY_NI("buffer_atomic_add"); break;
+		case 0x32:
+			// buffer_atomic_add vdata, vaddr, srsrc (no-return, glc=0): the guards
+			// above already force glc=0, so only the discard-result form is reachable.
+			inst.type        = ShaderInstructionType::BufferAtomicAdd;
+			inst.format      = ShaderInstructionFormat::Vdata1VaddrSvSoffsIdxen;
+			inst.src[1].size = 4;
+			break;
 		case 0x33: KYTY_NI("buffer_atomic_sub"); break;
 		case 0x34:
 			if (next_gen)
