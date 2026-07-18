@@ -102,7 +102,14 @@ static void* create_func(GraphicContext* ctx, const uint64_t* params, const uint
 	create_info.components.g                    = VK_COMPONENT_SWIZZLE_IDENTITY;
 	create_info.components.b                    = VK_COMPONENT_SWIZZLE_IDENTITY;
 	create_info.components.a                    = VK_COMPONENT_SWIZZLE_IDENTITY;
-	create_info.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+	// The attachment view must expose the stencil aspect on combined
+	// depth/stencil formats — otherwise stencil test/write is silently
+	// undefined. (VIEW_DEPTH_TEXTURE below stays DEPTH-only: sampled views
+	// must be single-aspect.)
+	create_info.subresourceRange.aspectMask =
+	    (vk_obj->format == VK_FORMAT_D24_UNORM_S8_UINT || vk_obj->format == VK_FORMAT_D32_SFLOAT_S8_UINT
+	         ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
+	         : VK_IMAGE_ASPECT_DEPTH_BIT);
 	create_info.subresourceRange.baseArrayLayer = 0;
 	create_info.subresourceRange.baseMipLevel   = 0;
 	create_info.subresourceRange.layerCount     = 1;

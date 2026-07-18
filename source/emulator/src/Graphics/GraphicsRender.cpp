@@ -3657,8 +3657,16 @@ static void get_stencil_state(PipelineStencilStaticState* s, PipelineStencilDyna
 		d->reference = ref[2];
 	} else
 	{
-		d->reference = 0;
+		// No REPLACE-family write op: the reference serves only the stencil
+		// COMPARE, whose GNM operand is STENCILTESTVAL.
+		d->reference = testval;
 	}
+
+	// Vulkan has ONE per-face reference for both the compare and the
+	// replace writes; if the compare actually reads it (func is not
+	// NEVER/ALWAYS) it must agree with the write operand.
+	bool compare_uses_ref = (func != 0 /* NEVER */ && func != 7 /* ALWAYS */);
+	EXIT_NOT_IMPLEMENTED(compare_uses_ref && (use_ref[0] || use_ref[1] || use_ref[2]) && d->reference != testval);
 }
 
 static Vector<RenderTextureVulkanImage*> FindRenderTexture(uint64_t vaddr, uint64_t size, bool exact)
