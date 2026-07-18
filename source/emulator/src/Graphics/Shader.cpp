@@ -673,7 +673,7 @@ static void cs_print(const char* func, const HW::CsStageRegisters& cs, const HW:
 	printf("\t tgid_z_en      = 0x%02" PRIx8 "\n", cs.tgid_z_en);
 	printf("\t tg_size_en     = 0x%02" PRIx8 "\n", cs.tg_size_en);
 	printf("\t tidig_comp_cnt = 0x%02" PRIx8 "\n", cs.tidig_comp_cnt);
-	printf("\t lds_size       = 0x%02" PRIx8 "\n", cs.lds_size);
+	printf("\t lds_size       = 0x%04" PRIx16 "\n", cs.lds_size);
 }
 
 static void bi_print(const char* func, const ShaderBinaryInfo& bi)
@@ -804,7 +804,8 @@ static void cs_check(const HW::CsStageRegisters& cs, const HW::ShaderRegisters& 
 	// EXIT_NOT_IMPLEMENTED(cs.tgid_z_en != 0x00);
 	EXIT_NOT_IMPLEMENTED(cs.tg_size_en != 0x00);
 	EXIT_NOT_IMPLEMENTED(cs.tidig_comp_cnt > 2);
-	EXIT_NOT_IMPLEMENTED(cs.lds_size != 0x00);
+	// LDS is supported: cs.lds_size (COMPUTE_PGM_RSRC2.LDS_SIZE, granules of
+	// 64 dwords) drives the SPIR-V Workgroup array size (see ShaderGetInputInfoCS).
 
 	//	EXIT_NOT_IMPLEMENTED(cs.m_computePgmRsrc1 != 0x002c0040);
 	//	EXIT_NOT_IMPLEMENTED(cs.m_computePgmRsrc2 != 0x00000098);
@@ -2278,6 +2279,9 @@ void ShaderGetInputInfoCS(const HW::ComputeShaderInfo* regs, const HW::ShaderReg
 
 	info->workgroup_register = regs->cs_regs.user_sgpr;
 
+	// COMPUTE_PGM_RSRC2.LDS_SIZE counts 64-dword (256-byte) granules on GCN.
+	info->lds_size_dw = static_cast<uint32_t>(regs->cs_regs.lds_size) * 64u;
+
 	info->bind.push_constant_offset = 0;
 	info->bind.push_constant_size   = 0;
 	info->bind.descriptor_set_slot  = 0;
@@ -3409,6 +3413,7 @@ ShaderId ShaderGetIdCS(const HW::ComputeShaderInfo* regs, const ShaderComputeInp
 
 	ret.ids.Add(input_info->workgroup_register);
 	ret.ids.Add(input_info->thread_ids_num);
+	ret.ids.Add(input_info->lds_size_dw); // LDS size affects the generated Workgroup array
 
 	for (int i = 0; i < 3; i++)
 	{

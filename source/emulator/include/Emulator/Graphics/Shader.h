@@ -35,15 +35,21 @@ enum class ShaderInstructionType : uint32_t
 	Unknown,
 
 	BufferLoadDword,
+	BufferLoadDwordx2,
+	BufferLoadDwordx4,
 	BufferLoadFormatX,
 	BufferLoadFormatXy,
 	BufferLoadFormatXyz,
 	BufferLoadFormatXyzw,
 	BufferStoreDword,
+	BufferStoreDwordx2,
+	BufferStoreDwordx4,
 	BufferStoreFormatX,
 	BufferStoreFormatXy,
 	DsAppend,
 	DsConsume,
+	DsReadB32,
+	DsWriteB32,
 	Exp,
 	ImageLoad,
 	ImageSample,
@@ -58,6 +64,7 @@ enum class ShaderInstructionType : uint32_t
 	SAndB64,
 	SAndn2B64,
 	SAndSaveexecB64,
+	SBarrier,
 	SBfeU32,
 	SBfeU64,
 	SBfmB32,
@@ -892,6 +899,7 @@ struct ShaderComputeInputInfo
 	bool                group_id[3]        = {false, false, false};
 	int                 thread_ids_num     = 0;
 	int                 workgroup_register = 0;
+	uint32_t            lds_size_dw        = 0; // workgroup-shared memory, in dwords (0 = none)
 	ShaderBindResources bind;
 };
 

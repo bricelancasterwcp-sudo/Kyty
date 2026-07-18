@@ -263,7 +263,12 @@ KYTY_SHADER_PARSER(shader_parse_sopp)
 
 		case 0x0: KYTY_NI("s_nop"); break;
 		case 0x9: KYTY_NI("s_cbranch_execnz"); break;
-		case 0xA: KYTY_NI("s_barrier"); break;
+		case 0xA:
+			// s_barrier: workgroup execution + LDS memory barrier
+			inst.type    = ShaderInstructionType::SBarrier;
+			inst.format  = ShaderInstructionFormat::Empty;
+			inst.src_num = 0;
+			break;
 		case 0xB: KYTY_NI("s_setkill"); break;
 		case 0xD: KYTY_NI("s_sethalt"); break;
 		case 0xE: KYTY_NI("s_sleep"); break;
@@ -2583,7 +2588,11 @@ KYTY_SHADER_PARSER(shader_parse_mubuf)
 
 	KYTY_TYPE_STR("mubuf");
 
-	uint32_t opcode = (buffer[0] >> 18u) & 0x1fu;
+	// MUBUF OP is a 7-bit field [24:18]. A 5-bit mask folds every op >= 0x20
+	// (all atomics) onto a low opcode — e.g. buffer_atomic_dec (0x3D) would
+	// alias buffer_store_dwordx2 (0x1D) and silently miscompile. Use the full
+	// width so unimplemented ops reach their KYTY_NI/UNKNOWN cases and fail loud.
+	uint32_t opcode = (buffer[0] >> 18u) & 0x7fu;
 	uint32_t lds    = (buffer[0] >> 16u) & 0x1u;
 	uint32_t glc    = (buffer[0] >> 14u) & 0x1u;
 	uint32_t idxen  = (buffer[0] >> 13u) & 0x1u;
@@ -2668,8 +2677,18 @@ KYTY_SHADER_PARSER(shader_parse_mubuf)
 			inst.format      = ShaderInstructionFormat::Vdata1VaddrSvSoffsIdxen;
 			inst.src[1].size = 4;
 			break;
-		case 0x0D: KYTY_NI("buffer_load_dwordx2"); break;
-		case 0x0E: KYTY_NI("buffer_load_dwordx4"); break;
+		case 0x0D:
+			inst.type        = ShaderInstructionType::BufferLoadDwordx2;
+			inst.format      = ShaderInstructionFormat::Vdata2VaddrSvSoffsIdxen;
+			inst.src[1].size = 4;
+			inst.dst.size    = 2;
+			break;
+		case 0x0E:
+			inst.type        = ShaderInstructionType::BufferLoadDwordx4;
+			inst.format      = ShaderInstructionFormat::Vdata4VaddrSvSoffsIdxen;
+			inst.src[1].size = 4;
+			inst.dst.size    = 4;
+			break;
 		case 0x0F: KYTY_NI("buffer_load_dwordx3"); break;
 		case 0x18: KYTY_NI("buffer_store_byte"); break;
 		case 0x1A: KYTY_NI("buffer_store_short"); break;
@@ -2678,8 +2697,18 @@ KYTY_SHADER_PARSER(shader_parse_mubuf)
 			inst.format      = ShaderInstructionFormat::Vdata1VaddrSvSoffsIdxen;
 			inst.src[1].size = 4;
 			break;
-		case 0x1D: KYTY_NI("buffer_store_dwordx2"); break;
-		case 0x1E: KYTY_NI("buffer_store_dwordx4"); break;
+		case 0x1D:
+			inst.type        = ShaderInstructionType::BufferStoreDwordx2;
+			inst.format      = ShaderInstructionFormat::Vdata2VaddrSvSoffsIdxen;
+			inst.src[1].size = 4;
+			inst.dst.size    = 2;
+			break;
+		case 0x1E:
+			inst.type        = ShaderInstructionType::BufferStoreDwordx4;
+			inst.format      = ShaderInstructionFormat::Vdata4VaddrSvSoffsIdxen;
+			inst.src[1].size = 4;
+			inst.dst.size    = 4;
+			break;
 		case 0x1F: KYTY_NI("buffer_store_dwordx3"); break;
 		case 0x30: KYTY_NI("buffer_atomic_swap"); break;
 		case 0x31: KYTY_NI("buffer_atomic_cmpswap"); break;
@@ -2768,12 +2797,26 @@ KYTY_SHADER_PARSER(shader_parse_ds)
 	uint32_t data0 = (buffer[1] >> 8u) & 0xffu;
 	uint32_t addr  = (buffer[1] >> 0u) & 0xffu;
 
-	EXIT_NOT_IMPLEMENTED(addr != 0);
-	EXIT_NOT_IMPLEMENTED(data0 != 0);
-	EXIT_NOT_IMPLEMENTED(data1 != 0);
-	EXIT_NOT_IMPLEMENTED(offset0 != 0);
-	EXIT_NOT_IMPLEMENTED(offset1 != 0);
-	EXIT_NOT_IMPLEMENTED(gds == 0);
+	// ds_write_b32 (0x0D) / ds_read_b32 (0x36) are the supported LDS forms: they
+	// address shared memory through the addr VGPR (gds == 0), carry no immediate
+	// offsets, and use data0/vdst — so the strict all-zero GDS guards below only
+	// apply to the GDS append/consume path.
+	bool is_lds_op = (opcode == 0x0D || opcode == 0x36);
+	if (is_lds_op)
+	{
+		EXIT_NOT_IMPLEMENTED(gds != 0);
+		EXIT_NOT_IMPLEMENTED(data1 != 0);
+		EXIT_NOT_IMPLEMENTED(offset0 != 0);
+		EXIT_NOT_IMPLEMENTED(offset1 != 0);
+	} else
+	{
+		EXIT_NOT_IMPLEMENTED(addr != 0);
+		EXIT_NOT_IMPLEMENTED(data0 != 0);
+		EXIT_NOT_IMPLEMENTED(data1 != 0);
+		EXIT_NOT_IMPLEMENTED(offset0 != 0);
+		EXIT_NOT_IMPLEMENTED(offset1 != 0);
+		EXIT_NOT_IMPLEMENTED(gds == 0);
+	}
 
 	uint32_t size = 2;
 
@@ -2797,7 +2840,14 @@ KYTY_SHADER_PARSER(shader_parse_ds)
 		case 0x0A: KYTY_NI("ds_or_b32"); break;
 		case 0x0B: KYTY_NI("ds_xor_b32"); break;
 		case 0x0C: KYTY_NI("ds_mskor_b32"); break;
-		case 0x0D: KYTY_NI("ds_write_b32"); break;
+		case 0x0D:
+			// ds_write_b32 addr, data0 : LDS[addr] = data0 (addr in bytes)
+			inst.type    = ShaderInstructionType::DsWriteB32;
+			inst.format  = ShaderInstructionFormat::Ssrc0Ssrc1;
+			inst.src[0]  = operand_parse(addr + 256);
+			inst.src[1]  = operand_parse(data0 + 256);
+			inst.src_num = 2;
+			break;
 		case 0x0E: KYTY_NI("ds_write2_b32"); break;
 		case 0x0F: KYTY_NI("ds_write2st64_b32"); break;
 		case 0x10: KYTY_NI("ds_cmpst_b32"); break;
@@ -2835,7 +2885,13 @@ KYTY_SHADER_PARSER(shader_parse_ds)
 		case 0x33: KYTY_NI("ds_max_rtn_f32"); break;
 		case 0x34: KYTY_NI("ds_wrap_rtn_b32"); break;
 		case 0x35: KYTY_NI("ds_swizzle_b32"); break;
-		case 0x36: KYTY_NI("ds_read_b32"); break;
+		case 0x36:
+			// ds_read_b32 vdst, addr : vdst = LDS[addr] (addr in bytes)
+			inst.type    = ShaderInstructionType::DsReadB32;
+			inst.format  = ShaderInstructionFormat::SVdstSVsrc0;
+			inst.src[0]  = operand_parse(addr + 256);
+			inst.src_num = 1;
+			break;
 		case 0x37: KYTY_NI("ds_read2_b32"); break;
 		case 0x38: KYTY_NI("ds_read2st64_b32"); break;
 		case 0x39: KYTY_NI("ds_read_i8"); break;

@@ -712,6 +712,89 @@ constexpr char BUFFER_STORE_FLOAT2[] = R"(
                OpFunctionEnd
 )";
 
+constexpr char BUFFER_LOAD_FLOAT2[] = R"(
+             ; void buffer_load_float2(out float p1, out float p2, in int index, in int offset, in int stride, in int buffer_index)
+             ; {
+             ; 	int addr = (offset + index * stride)/4;
+             ; 	p1 = buf[buffer_index].data[addr+0];
+             ; 	p2 = buf[buffer_index].data[addr+1];
+             ; }
+%buffer_load_float2 = OpFunction %void None %function_buffer_load_store_float2
+         %buf_l_f2_21 = OpFunctionParameter %_ptr_Function_float
+         %buf_l_f2_22 = OpFunctionParameter %_ptr_Function_float
+         %buf_l_f2_25 = OpFunctionParameter %_ptr_Function_int
+         %buf_l_f2_26 = OpFunctionParameter %_ptr_Function_int
+         %buf_l_f2_27 = OpFunctionParameter %_ptr_Function_int
+         %buf_l_f2_28 = OpFunctionParameter %_ptr_Function_int
+         %buf_l_f2_30 = OpLabel
+         %buf_l_f2_44 = OpVariable %_ptr_Function_int Function
+         %buf_l_f2_45 = OpLoad %int %buf_l_f2_26
+         %buf_l_f2_46 = OpLoad %int %buf_l_f2_25
+         %buf_l_f2_47 = OpLoad %int %buf_l_f2_27
+         %buf_l_f2_48 = OpIMul %int %buf_l_f2_46 %buf_l_f2_47
+         %buf_l_f2_49 = OpIAdd %int %buf_l_f2_45 %buf_l_f2_48
+         %buf_l_f2_51 = OpSDiv %int %buf_l_f2_49 %int_4
+               OpStore %buf_l_f2_44 %buf_l_f2_51
+         %buf_l_f2_58 = OpLoad %int %buf_l_f2_28
+         %buf_l_f2_63 = OpAccessChain %_ptr_StorageBuffer_float %buf %buf_l_f2_58 %int_0 %buf_l_f2_51
+         %buf_l_f2_64 = OpLoad %float %buf_l_f2_63
+               OpStore %buf_l_f2_21 %buf_l_f2_64
+         %buf_l_f2_65 = OpLoad %int %buf_l_f2_28
+         %buf_l_f2_68 = OpIAdd %int %buf_l_f2_51 %int_1
+         %buf_l_f2_69 = OpAccessChain %_ptr_StorageBuffer_float %buf %buf_l_f2_65 %int_0 %buf_l_f2_68
+         %buf_l_f2_70 = OpLoad %float %buf_l_f2_69
+               OpStore %buf_l_f2_22 %buf_l_f2_70
+               OpReturn
+               OpFunctionEnd
+)";
+
+constexpr char BUFFER_STORE_FLOAT4[] = R"(
+             ; void buffer_store_float4(in float p1, in float p2, in float p3, in float p4, in int index, in int offset, in int stride, in int buffer_index)
+             ; {
+             ; 	int addr = (offset + index * stride)/4;
+             ; 	buf[buffer_index].data[addr+0..3] = p1..p4;
+             ; }
+%buffer_store_float4 = OpFunction %void None %function_buffer_load_float4
+         %buf_s_f4_51 = OpFunctionParameter %_ptr_Function_float
+         %buf_s_f4_52 = OpFunctionParameter %_ptr_Function_float
+         %buf_s_f4_53 = OpFunctionParameter %_ptr_Function_float
+         %buf_s_f4_54 = OpFunctionParameter %_ptr_Function_float
+         %buf_s_f4_55 = OpFunctionParameter %_ptr_Function_int
+         %buf_s_f4_56 = OpFunctionParameter %_ptr_Function_int
+         %buf_s_f4_57 = OpFunctionParameter %_ptr_Function_int
+         %buf_s_f4_58 = OpFunctionParameter %_ptr_Function_int
+         %buf_s_f4_60 = OpLabel
+        %buf_s_f4_143 = OpVariable %_ptr_Function_int Function
+        %buf_s_f4_144 = OpLoad %int %buf_s_f4_56
+        %buf_s_f4_145 = OpLoad %int %buf_s_f4_55
+        %buf_s_f4_146 = OpLoad %int %buf_s_f4_57
+        %buf_s_f4_147 = OpIMul %int %buf_s_f4_145 %buf_s_f4_146
+        %buf_s_f4_148 = OpIAdd %int %buf_s_f4_144 %buf_s_f4_147
+        %buf_s_f4_149 = OpSDiv %int %buf_s_f4_148 %int_4
+               OpStore %buf_s_f4_143 %buf_s_f4_149
+        %buf_s_f4_150 = OpLoad %int %buf_s_f4_58
+        %buf_s_f4_153 = OpLoad %float %buf_s_f4_51
+        %buf_s_f4_154 = OpAccessChain %_ptr_StorageBuffer_float %buf %buf_s_f4_150 %int_0 %buf_s_f4_149
+               OpStore %buf_s_f4_154 %buf_s_f4_153
+        %buf_s_f4_155 = OpLoad %int %buf_s_f4_58
+        %buf_s_f4_158 = OpIAdd %int %buf_s_f4_149 %int_1
+        %buf_s_f4_159 = OpLoad %float %buf_s_f4_52
+        %buf_s_f4_160 = OpAccessChain %_ptr_StorageBuffer_float %buf %buf_s_f4_155 %int_0 %buf_s_f4_158
+               OpStore %buf_s_f4_160 %buf_s_f4_159
+        %buf_s_f4_161 = OpLoad %int %buf_s_f4_58
+        %buf_s_f4_162 = OpIAdd %int %buf_s_f4_149 %int_2
+        %buf_s_f4_163 = OpLoad %float %buf_s_f4_53
+        %buf_s_f4_164 = OpAccessChain %_ptr_StorageBuffer_float %buf %buf_s_f4_161 %int_0 %buf_s_f4_162
+               OpStore %buf_s_f4_164 %buf_s_f4_163
+        %buf_s_f4_165 = OpLoad %int %buf_s_f4_58
+        %buf_s_f4_166 = OpIAdd %int %buf_s_f4_149 %int_3
+        %buf_s_f4_167 = OpLoad %float %buf_s_f4_54
+        %buf_s_f4_168 = OpAccessChain %_ptr_StorageBuffer_float %buf %buf_s_f4_165 %int_0 %buf_s_f4_166
+               OpStore %buf_s_f4_168 %buf_s_f4_167
+               OpReturn
+               OpFunctionEnd
+)";
+
 constexpr char TBUFFER_LOAD_FORMAT_XYZW[] = R"(
              ; Function tbuffer_load_format_xyzw
              ; void tbuffer_load_format_xyzw(out float p1, out float p2, out float p3, out float p4, 
@@ -1498,6 +1581,9 @@ public:
 	[[nodiscard]] const ShaderBindResources* GetBindInfo() const { return m_bind; }
 	//[[nodiscard]] const ShaderBindParameters& GetBindParams() const { return m_bind_params; }
 
+	[[nodiscard]] bool IsCfgLinear() const { return m_cfg_mode == CfgMode::Linear; }
+	[[nodiscard]] bool HasLds() const { return m_cs_input_info != nullptr && m_cs_input_info->lds_size_dw > 0; }
+
 	void                  AddConstantUint(uint32_t u);
 	void                  AddConstantInt(int i);
 	void                  AddConstantFloat(float f);
@@ -2280,6 +2366,316 @@ KYTY_RECOMPILER_FUNC(Recompile_BufferStoreFormatXy_Vdata2VaddrSvSoffsIdxen)
 	}
 
 	return false;
+}
+
+// buffer_load_dwordx2/x4: like buffer_load_dword but N consecutive dwords into
+// v[dst..dst+N-1]. No exec guard (mirrors the single-dword load).
+KYTY_RECOMPILER_FUNC(Recompile_BufferLoadDwordx2_Vdata2VaddrSvSoffsIdxen)
+{
+	const auto& inst      = code.GetInstructions().At(index);
+	const auto* bind_info = spirv->GetBindInfo();
+
+	if (bind_info != nullptr && bind_info->storage_buffers.buffers_num > 0)
+	{
+		EXIT_NOT_IMPLEMENTED(!operand_is_constant(inst.src[2]));
+
+		auto    dst_value0  = operand_variable_to_str(inst.dst, 0);
+		auto    dst_value1  = operand_variable_to_str(inst.dst, 1);
+		auto    src0_value  = operand_variable_to_str(inst.src[0]);
+		auto    src1_value0 = operand_variable_to_str(inst.src[1], 0);
+		auto    src1_value1 = operand_variable_to_str(inst.src[1], 1);
+		String8 offset      = spirv->GetConstant(inst.src[2]);
+
+		EXIT_NOT_IMPLEMENTED(dst_value0.type != SpirvType::Float);
+		EXIT_NOT_IMPLEMENTED(src0_value.type != SpirvType::Float);
+		EXIT_NOT_IMPLEMENTED(src1_value0.type != SpirvType::Uint);
+		EXIT_NOT_IMPLEMENTED(src1_value1.type != SpirvType::Uint);
+
+		static const char* text = R"(
+        %t100_<index> = OpLoad %float %<src0>
+        %t101_<index> = OpBitcast %int %t100_<index>
+               OpStore %temp_int_1 %t101_<index>
+        %t148_<index> = OpLoad %uint %<src1_value1>
+        %t150_<index> = OpShiftRightLogical %uint %t148_<index> %int_16
+        %t152_<index> = OpBitwiseAnd %uint %t150_<index> %uint_0x00003fff
+        %t153_<index> = OpBitcast %int %t152_<index>
+               OpStore %temp_int_3 %t153_<index>
+        %t155_<index> = OpLoad %uint %<src1_value0>
+        %t156_<index> = OpBitcast %int %t155_<index>
+               OpStore %temp_int_4 %t156_<index>
+               OpStore %temp_int_2 %<offset>
+        %t110_<index> = OpFunctionCall %void %buffer_load_float2 %<p0> %<p1> %temp_int_1 %temp_int_2 %temp_int_3 %temp_int_4
+)";
+		*dst_source += String8(text)
+		                   .ReplaceStr("<index>", String8::FromPrintf("%u", index))
+		                   .ReplaceStr("<src0>", src0_value.value)
+		                   .ReplaceStr("<offset>", offset)
+		                   .ReplaceStr("<src1_value0>", src1_value0.value)
+		                   .ReplaceStr("<src1_value1>", src1_value1.value)
+		                   .ReplaceStr("<p0>", dst_value0.value)
+		                   .ReplaceStr("<p1>", dst_value1.value);
+
+		return true;
+	}
+
+	return false;
+}
+
+KYTY_RECOMPILER_FUNC(Recompile_BufferLoadDwordx4_Vdata4VaddrSvSoffsIdxen)
+{
+	const auto& inst      = code.GetInstructions().At(index);
+	const auto* bind_info = spirv->GetBindInfo();
+
+	if (bind_info != nullptr && bind_info->storage_buffers.buffers_num > 0)
+	{
+		EXIT_NOT_IMPLEMENTED(!operand_is_constant(inst.src[2]));
+
+		auto    dst_value0  = operand_variable_to_str(inst.dst, 0);
+		auto    dst_value1  = operand_variable_to_str(inst.dst, 1);
+		auto    dst_value2  = operand_variable_to_str(inst.dst, 2);
+		auto    dst_value3  = operand_variable_to_str(inst.dst, 3);
+		auto    src0_value  = operand_variable_to_str(inst.src[0]);
+		auto    src1_value0 = operand_variable_to_str(inst.src[1], 0);
+		auto    src1_value1 = operand_variable_to_str(inst.src[1], 1);
+		String8 offset      = spirv->GetConstant(inst.src[2]);
+
+		EXIT_NOT_IMPLEMENTED(dst_value0.type != SpirvType::Float);
+		EXIT_NOT_IMPLEMENTED(src0_value.type != SpirvType::Float);
+		EXIT_NOT_IMPLEMENTED(src1_value0.type != SpirvType::Uint);
+		EXIT_NOT_IMPLEMENTED(src1_value1.type != SpirvType::Uint);
+
+		static const char* text = R"(
+        %t100_<index> = OpLoad %float %<src0>
+        %t101_<index> = OpBitcast %int %t100_<index>
+               OpStore %temp_int_1 %t101_<index>
+        %t148_<index> = OpLoad %uint %<src1_value1>
+        %t150_<index> = OpShiftRightLogical %uint %t148_<index> %int_16
+        %t152_<index> = OpBitwiseAnd %uint %t150_<index> %uint_0x00003fff
+        %t153_<index> = OpBitcast %int %t152_<index>
+               OpStore %temp_int_3 %t153_<index>
+        %t155_<index> = OpLoad %uint %<src1_value0>
+        %t156_<index> = OpBitcast %int %t155_<index>
+               OpStore %temp_int_4 %t156_<index>
+               OpStore %temp_int_2 %<offset>
+        %t110_<index> = OpFunctionCall %void %buffer_load_float4 %<p0> %<p1> %<p2> %<p3> %temp_int_1 %temp_int_2 %temp_int_3 %temp_int_4
+)";
+		*dst_source += String8(text)
+		                   .ReplaceStr("<index>", String8::FromPrintf("%u", index))
+		                   .ReplaceStr("<src0>", src0_value.value)
+		                   .ReplaceStr("<offset>", offset)
+		                   .ReplaceStr("<src1_value0>", src1_value0.value)
+		                   .ReplaceStr("<src1_value1>", src1_value1.value)
+		                   .ReplaceStr("<p0>", dst_value0.value)
+		                   .ReplaceStr("<p1>", dst_value1.value)
+		                   .ReplaceStr("<p2>", dst_value2.value)
+		                   .ReplaceStr("<p3>", dst_value3.value);
+
+		return true;
+	}
+
+	return false;
+}
+
+// buffer_store_dwordx2/x4: N consecutive dwords from v[dst..dst+N-1]. Guarded
+// by exec_lo != 0 (mirrors the single-dword store).
+KYTY_RECOMPILER_FUNC(Recompile_BufferStoreDwordx2_Vdata2VaddrSvSoffsIdxen)
+{
+	const auto& inst      = code.GetInstructions().At(index);
+	const auto* bind_info = spirv->GetBindInfo();
+
+	if (bind_info != nullptr && bind_info->storage_buffers.buffers_num > 0)
+	{
+		EXIT_NOT_IMPLEMENTED(!operand_is_constant(inst.src[2]));
+
+		auto    dst_value0  = operand_variable_to_str(inst.dst, 0);
+		auto    dst_value1  = operand_variable_to_str(inst.dst, 1);
+		auto    src0_value  = operand_variable_to_str(inst.src[0]);
+		auto    src1_value0 = operand_variable_to_str(inst.src[1], 0);
+		auto    src1_value1 = operand_variable_to_str(inst.src[1], 1);
+		String8 offset      = spirv->GetConstant(inst.src[2]);
+
+		EXIT_NOT_IMPLEMENTED(dst_value0.type != SpirvType::Float);
+		EXIT_NOT_IMPLEMENTED(src0_value.type != SpirvType::Float);
+		EXIT_NOT_IMPLEMENTED(src1_value0.type != SpirvType::Uint);
+		EXIT_NOT_IMPLEMENTED(src1_value1.type != SpirvType::Uint);
+
+		static const char* text = R"(
+        %exec_lo_u_<index> = OpLoad %uint %exec_lo
+        %exec_lo_b_<index> = OpINotEqual %bool %exec_lo_u_<index> %uint_0
+               OpSelectionMerge %t278_<index> None
+               OpBranchConditional %exec_lo_b_<index> %t277_<index> %t278_<index>
+        %t277_<index> = OpLabel
+        %t100_<index> = OpLoad %float %<src0>
+        %t101_<index> = OpBitcast %int %t100_<index>
+               OpStore %temp_int_1 %t101_<index>
+        %t148_<index> = OpLoad %uint %<src1_value1>
+        %t150_<index> = OpShiftRightLogical %uint %t148_<index> %int_16
+        %t152_<index> = OpBitwiseAnd %uint %t150_<index> %uint_0x00003fff
+        %t153_<index> = OpBitcast %int %t152_<index>
+               OpStore %temp_int_3 %t153_<index>
+        %t155_<index> = OpLoad %uint %<src1_value0>
+        %t156_<index> = OpBitcast %int %t155_<index>
+               OpStore %temp_int_4 %t156_<index>
+               OpStore %temp_int_2 %<offset>
+        %t110_<index> = OpFunctionCall %void %buffer_store_float2 %<p0> %<p1> %temp_int_1 %temp_int_2 %temp_int_3 %temp_int_4
+               OpBranch %t278_<index>
+        %t278_<index> = OpLabel
+)";
+		*dst_source += String8(text)
+		                   .ReplaceStr("<index>", String8::FromPrintf("%u", index))
+		                   .ReplaceStr("<src0>", src0_value.value)
+		                   .ReplaceStr("<offset>", offset)
+		                   .ReplaceStr("<src1_value0>", src1_value0.value)
+		                   .ReplaceStr("<src1_value1>", src1_value1.value)
+		                   .ReplaceStr("<p0>", dst_value0.value)
+		                   .ReplaceStr("<p1>", dst_value1.value);
+
+		return true;
+	}
+
+	return false;
+}
+
+KYTY_RECOMPILER_FUNC(Recompile_BufferStoreDwordx4_Vdata4VaddrSvSoffsIdxen)
+{
+	const auto& inst      = code.GetInstructions().At(index);
+	const auto* bind_info = spirv->GetBindInfo();
+
+	if (bind_info != nullptr && bind_info->storage_buffers.buffers_num > 0)
+	{
+		EXIT_NOT_IMPLEMENTED(!operand_is_constant(inst.src[2]));
+
+		auto    dst_value0  = operand_variable_to_str(inst.dst, 0);
+		auto    dst_value1  = operand_variable_to_str(inst.dst, 1);
+		auto    dst_value2  = operand_variable_to_str(inst.dst, 2);
+		auto    dst_value3  = operand_variable_to_str(inst.dst, 3);
+		auto    src0_value  = operand_variable_to_str(inst.src[0]);
+		auto    src1_value0 = operand_variable_to_str(inst.src[1], 0);
+		auto    src1_value1 = operand_variable_to_str(inst.src[1], 1);
+		String8 offset      = spirv->GetConstant(inst.src[2]);
+
+		EXIT_NOT_IMPLEMENTED(dst_value0.type != SpirvType::Float);
+		EXIT_NOT_IMPLEMENTED(src0_value.type != SpirvType::Float);
+		EXIT_NOT_IMPLEMENTED(src1_value0.type != SpirvType::Uint);
+		EXIT_NOT_IMPLEMENTED(src1_value1.type != SpirvType::Uint);
+
+		static const char* text = R"(
+        %exec_lo_u_<index> = OpLoad %uint %exec_lo
+        %exec_lo_b_<index> = OpINotEqual %bool %exec_lo_u_<index> %uint_0
+               OpSelectionMerge %t278_<index> None
+               OpBranchConditional %exec_lo_b_<index> %t277_<index> %t278_<index>
+        %t277_<index> = OpLabel
+        %t100_<index> = OpLoad %float %<src0>
+        %t101_<index> = OpBitcast %int %t100_<index>
+               OpStore %temp_int_1 %t101_<index>
+        %t148_<index> = OpLoad %uint %<src1_value1>
+        %t150_<index> = OpShiftRightLogical %uint %t148_<index> %int_16
+        %t152_<index> = OpBitwiseAnd %uint %t150_<index> %uint_0x00003fff
+        %t153_<index> = OpBitcast %int %t152_<index>
+               OpStore %temp_int_3 %t153_<index>
+        %t155_<index> = OpLoad %uint %<src1_value0>
+        %t156_<index> = OpBitcast %int %t155_<index>
+               OpStore %temp_int_4 %t156_<index>
+               OpStore %temp_int_2 %<offset>
+        %t110_<index> = OpFunctionCall %void %buffer_store_float4 %<p0> %<p1> %<p2> %<p3> %temp_int_1 %temp_int_2 %temp_int_3 %temp_int_4
+               OpBranch %t278_<index>
+        %t278_<index> = OpLabel
+)";
+		*dst_source += String8(text)
+		                   .ReplaceStr("<index>", String8::FromPrintf("%u", index))
+		                   .ReplaceStr("<src0>", src0_value.value)
+		                   .ReplaceStr("<offset>", offset)
+		                   .ReplaceStr("<src1_value0>", src1_value0.value)
+		                   .ReplaceStr("<src1_value1>", src1_value1.value)
+		                   .ReplaceStr("<p0>", dst_value0.value)
+		                   .ReplaceStr("<p1>", dst_value1.value)
+		                   .ReplaceStr("<p2>", dst_value2.value)
+		                   .ReplaceStr("<p3>", dst_value3.value);
+
+		return true;
+	}
+
+	return false;
+}
+
+// s_barrier: workgroup control + memory barrier. Emitted at top level of %main
+// (uniform control flow) — only valid in the Linear CFG path.
+KYTY_RECOMPILER_FUNC(Recompile_SBarrier_Empty)
+{
+	EXIT_NOT_IMPLEMENTED(!spirv->IsCfgLinear());
+
+	// execution scope = Workgroup (2), memory scope = Workgroup (2),
+	// semantics = WorkgroupMemory | AcquireRelease (0x108 = 264). Uint
+	// constants >= 256 are named in hex (AddConstant).
+	static const char* text = R"(
+               OpControlBarrier %uint_2 %uint_2 %uint_0x00000108
+)";
+	*dst_source += text;
+
+	return true;
+}
+
+// ds_write_b32 addr, data : LDS[addr/4] = data. addr in bytes (VGPR), data VGPR.
+KYTY_RECOMPILER_FUNC(Recompile_DsWriteB32_Ssrc0Ssrc1)
+{
+	const auto& inst = code.GetInstructions().At(index);
+
+	// The %lds Workgroup array is only emitted when RSRC2.LDS_SIZE > 0. A DS op
+	// with no LDS allocated is a malformed kernel — fail loud here rather than
+	// emit a dangling %lds reference the assembler can't resolve.
+	EXIT_NOT_IMPLEMENTED(!spirv->HasLds());
+
+	auto addr_value = operand_variable_to_str(inst.src[0]);
+	auto data_value = operand_variable_to_str(inst.src[1]);
+
+	EXIT_NOT_IMPLEMENTED(addr_value.type != SpirvType::Float);
+	EXIT_NOT_IMPLEMENTED(data_value.type != SpirvType::Float);
+
+	static const char* text = R"(
+        %lds_wa_<index> = OpLoad %float %<addr>
+        %lds_wb_<index> = OpBitcast %int %lds_wa_<index>
+        %lds_wc_<index> = OpSDiv %int %lds_wb_<index> %int_4
+        %lds_wd_<index> = OpLoad %float %<data>
+        %lds_we_<index> = OpBitcast %uint %lds_wd_<index>
+        %lds_wf_<index> = OpAccessChain %_ptr_Workgroup_uint %lds %lds_wc_<index>
+               OpStore %lds_wf_<index> %lds_we_<index>
+)";
+	*dst_source += String8(text)
+	                   .ReplaceStr("<index>", String8::FromPrintf("%u", index))
+	                   .ReplaceStr("<addr>", addr_value.value)
+	                   .ReplaceStr("<data>", data_value.value);
+
+	return true;
+}
+
+// ds_read_b32 vdst, addr : vdst = LDS[addr/4]. addr in bytes (VGPR), vdst VGPR.
+KYTY_RECOMPILER_FUNC(Recompile_DsReadB32_SVdstSVsrc0)
+{
+	const auto& inst = code.GetInstructions().At(index);
+
+	EXIT_NOT_IMPLEMENTED(!spirv->HasLds());
+
+	auto dst_value  = operand_variable_to_str(inst.dst);
+	auto addr_value = operand_variable_to_str(inst.src[0]);
+
+	EXIT_NOT_IMPLEMENTED(dst_value.type != SpirvType::Float);
+	EXIT_NOT_IMPLEMENTED(addr_value.type != SpirvType::Float);
+
+	static const char* text = R"(
+        %lds_ra_<index> = OpLoad %float %<addr>
+        %lds_rb_<index> = OpBitcast %int %lds_ra_<index>
+        %lds_rc_<index> = OpSDiv %int %lds_rb_<index> %int_4
+        %lds_rd_<index> = OpAccessChain %_ptr_Workgroup_uint %lds %lds_rc_<index>
+        %lds_re_<index> = OpLoad %uint %lds_rd_<index>
+        %lds_rf_<index> = OpBitcast %float %lds_re_<index>
+               OpStore %<dst> %lds_rf_<index>
+)";
+	*dst_source += String8(text)
+	                   .ReplaceStr("<index>", String8::FromPrintf("%u", index))
+	                   .ReplaceStr("<dst>", dst_value.value)
+	                   .ReplaceStr("<addr>", addr_value.value);
+
+	return true;
 }
 
 KYTY_RECOMPILER_FUNC(Recompile_DsAppend_VdstGds)
@@ -6296,8 +6692,12 @@ const RecompilerFunc* RecompFunc(ShaderInstructionType type, ShaderInstructionFo
 	static const RecompilerFunc g_recomp_func[] = {
 	    // clang-format off
     {Recompile_BufferLoadDword_Vdata1VaddrSvSoffsIdxen,     ShaderInstructionType::BufferLoadDword,      ShaderInstructionFormat::Vdata1VaddrSvSoffsIdxen,        {""}},
+    {Recompile_BufferLoadDwordx2_Vdata2VaddrSvSoffsIdxen,   ShaderInstructionType::BufferLoadDwordx2,    ShaderInstructionFormat::Vdata2VaddrSvSoffsIdxen,        {""}},
+    {Recompile_BufferLoadDwordx4_Vdata4VaddrSvSoffsIdxen,   ShaderInstructionType::BufferLoadDwordx4,    ShaderInstructionFormat::Vdata4VaddrSvSoffsIdxen,        {""}},
     {Recompile_BufferLoadFormatX_Vdata1VaddrSvSoffsIdxen,   ShaderInstructionType::BufferLoadFormatX,    ShaderInstructionFormat::Vdata1VaddrSvSoffsIdxen,        {""}},
     {Recompile_BufferStoreDword_Vdata1VaddrSvSoffsIdxen,    ShaderInstructionType::BufferStoreDword,     ShaderInstructionFormat::Vdata1VaddrSvSoffsIdxen,        {""}},
+    {Recompile_BufferStoreDwordx2_Vdata2VaddrSvSoffsIdxen,  ShaderInstructionType::BufferStoreDwordx2,   ShaderInstructionFormat::Vdata2VaddrSvSoffsIdxen,        {""}},
+    {Recompile_BufferStoreDwordx4_Vdata4VaddrSvSoffsIdxen,  ShaderInstructionType::BufferStoreDwordx4,   ShaderInstructionFormat::Vdata4VaddrSvSoffsIdxen,        {""}},
     {Recompile_BufferStoreFormatX_Vdata1VaddrSvSoffsIdxen,  ShaderInstructionType::BufferStoreFormatX,   ShaderInstructionFormat::Vdata1VaddrSvSoffsIdxen,        {""}},
     {Recompile_BufferStoreFormatXy_Vdata2VaddrSvSoffsIdxen, ShaderInstructionType::BufferStoreFormatXy,  ShaderInstructionFormat::Vdata2VaddrSvSoffsIdxen,        {""}},
 
@@ -6308,6 +6708,8 @@ const RecompilerFunc* RecompFunc(ShaderInstructionType type, ShaderInstructionFo
 
     {Recompile_DsAppend_VdstGds,                           ShaderInstructionType::DsAppend,            ShaderInstructionFormat::VdstGds,                        {""}},
     {Recompile_DsConsume_VdstGds,                          ShaderInstructionType::DsConsume,           ShaderInstructionFormat::VdstGds,                        {""}},
+    {Recompile_DsReadB32_SVdstSVsrc0,                      ShaderInstructionType::DsReadB32,           ShaderInstructionFormat::SVdstSVsrc0,                    {""}},
+    {Recompile_DsWriteB32_Ssrc0Ssrc1,                      ShaderInstructionType::DsWriteB32,          ShaderInstructionFormat::Ssrc0Ssrc1,                     {""}},
 
     {Recompile_Exp_Mrt0OffOffComprVmDone,                  ShaderInstructionType::Exp,                 ShaderInstructionFormat::Mrt0OffOffComprVmDone,          {""}},
     {Recompile_Exp_Mrt0Vsrc0Vsrc1ComprVmDone,              ShaderInstructionType::Exp,                 ShaderInstructionFormat::Mrt0Vsrc0Vsrc1ComprVmDone,      {""}},
@@ -6461,6 +6863,7 @@ const RecompilerFunc* RecompFunc(ShaderInstructionType type, ShaderInstructionFo
     {Recompile_SSwappcB64_Sdst2Ssrc02,         ShaderInstructionType::SSwappcB64,          ShaderInstructionFormat::Sdst2Ssrc02, {""}},
     {Recompile_SWqmB64_Sdst2Ssrc02,            ShaderInstructionType::SWqmB64,             ShaderInstructionFormat::Sdst2Ssrc02, {""}, SccCheck::NonZero},
 
+	{Recompile_SBarrier_Empty,                 ShaderInstructionType::SBarrier,            ShaderInstructionFormat::Empty,       {""}},
 	{Recompile_Skip,                           ShaderInstructionType::SInstPrefetch,       ShaderInstructionFormat::Imm,         {""}},
 	{Recompile_Skip,                           ShaderInstructionType::SSendmsg,            ShaderInstructionFormat::Imm,         {""}},
 	{Recompile_Skip,                           ShaderInstructionType::SSetprio,            ShaderInstructionFormat::Imm,         {""}},
@@ -6901,6 +7304,10 @@ void Spirv::WriteHeader()
 			}
 			vars.Add("%gl_LocalInvocationID");
 			vars.Add("%gl_WorkGroupID");
+			if (m_cs_input_info != nullptr && m_cs_input_info->lds_size_dw > 0)
+			{
+				vars.Add("%lds"); // Vulkan 1.5 entry-point interface lists all global vars
+			}
 			header_str = String8(header).ReplaceStr("<Type>", "GLCompute");
 			break;
 		default: EXIT("unknown type: %s\n", Core::EnumName8(m_code.GetType()).c_str()); break;
@@ -7155,11 +7562,27 @@ void Spirv::WriteTypes()
 
 	m_source += types;
 
+	// Workgroup-shared (LDS) array, sized by COMPUTE_PGM_RSRC2.LDS_SIZE. The size
+	// is name-mangled so the type ids stay unique per allocation.
+	static const char* lds_types = R"(
+                     %lds_len_uint_<lds_num> = OpConstant %uint <lds_num>
+                        %_arr_uint_lds_<lds_num> = OpTypeArray %uint %lds_len_uint_<lds_num>
+%_ptr_Workgroup__arr_uint_lds_<lds_num> = OpTypePointer Workgroup %_arr_uint_lds_<lds_num>
+                        %_ptr_Workgroup_uint = OpTypePointer Workgroup %uint
+)";
+
 	switch (m_code.GetType())
 	{
 		case ShaderType::Vertex: m_source += vertex_types; break;
 		case ShaderType::Pixel: m_source += pixel_types; break;
-		case ShaderType::Compute: m_source += compute_types; break;
+		case ShaderType::Compute:
+			m_source += compute_types;
+			if (m_cs_input_info != nullptr && m_cs_input_info->lds_size_dw > 0)
+			{
+				m_source += String8(lds_types).ReplaceStr("<lds_num>",
+				                                          String8::FromPrintf("%u", m_cs_input_info->lds_size_dw));
+			}
+			break;
 		default: EXIT("unknown type: %s\n", Core::EnumName8(m_code.GetType()).c_str()); break;
 	}
 
@@ -7362,6 +7785,11 @@ void Spirv::WriteGlobalVariables()
 				vars.Add(String8::FromPrintf("%%gl_WorkGroupSize = OpConstantComposite %%v3uint %%uint_%u %%uint_%u %%uint_%u",
 				                             m_cs_input_info->threads_num[0], m_cs_input_info->threads_num[1],
 				                             m_cs_input_info->threads_num[2]));
+				if (m_cs_input_info->lds_size_dw > 0)
+				{
+					vars.Add(String8::FromPrintf("%%lds = OpVariable %%_ptr_Workgroup__arr_uint_lds_%u Workgroup",
+					                             m_cs_input_info->lds_size_dw));
+				}
 			}
 			m_source += String8(compute_variables).ReplaceStr("<Variables>", vars.Concat("\n" + String8(' ', 15)));
 			break;
@@ -8373,22 +8801,26 @@ void Spirv::WriteFunctions()
 		m_source += FUNC_FETCH_4;
 	}
 
-	if (m_code.HasAnyOf({ShaderInstructionType::BufferLoadDword, ShaderInstructionType::BufferLoadFormatX,
+	if (m_code.HasAnyOf({ShaderInstructionType::BufferLoadDword, ShaderInstructionType::BufferLoadDwordx2,
+	                     ShaderInstructionType::BufferLoadDwordx4, ShaderInstructionType::BufferLoadFormatX,
 	                     ShaderInstructionType::BufferLoadFormatXy, ShaderInstructionType::BufferLoadFormatXyz,
 	                     ShaderInstructionType::BufferLoadFormatXyzw, ShaderInstructionType::TBufferLoadFormatX,
 	                     ShaderInstructionType::TBufferLoadFormatXyzw}))
 	{
 		m_source += BUFFER_LOAD_FLOAT1;
+		m_source += BUFFER_LOAD_FLOAT2;
 		m_source += BUFFER_LOAD_FLOAT4;
 		m_source += TBUFFER_LOAD_FORMAT_X;
 		m_source += TBUFFER_LOAD_FORMAT_XYZW;
 	}
 
-	if (m_code.HasAnyOf({ShaderInstructionType::BufferStoreDword, ShaderInstructionType::BufferStoreFormatX,
+	if (m_code.HasAnyOf({ShaderInstructionType::BufferStoreDword, ShaderInstructionType::BufferStoreDwordx2,
+	                     ShaderInstructionType::BufferStoreDwordx4, ShaderInstructionType::BufferStoreFormatX,
 	                     ShaderInstructionType::BufferStoreFormatXy}))
 	{
 		m_source += BUFFER_STORE_FLOAT1;
 		m_source += BUFFER_STORE_FLOAT2;
+		m_source += BUFFER_STORE_FLOAT4;
 		m_source += TBUFFER_STORE_FORMAT_X;
 		m_source += TBUFFER_STORE_FORMAT_XY;
 	}
@@ -8452,6 +8884,7 @@ void Spirv::FindConstants()
 		AddConstantUint(64);
 		AddConstantUint(72);
 		AddConstantUint(127);
+		AddConstantUint(264); // OpControlBarrier semantics: WorkgroupMemory|AcquireRelease
 		AddConstantUint(0x3fff);
 		AddConstantUint(0xffffff);
 		AddConstantUint(0xffffe000);

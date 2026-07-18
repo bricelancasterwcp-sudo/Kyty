@@ -498,7 +498,9 @@ struct CsStageRegisters
 	uint8_t  tgid_z_en      = 0;
 	uint8_t  tg_size_en     = 0;
 	uint8_t  tidig_comp_cnt = 0;
-	uint8_t  lds_size       = 0;
+	// COMPUTE_PGM_RSRC2.LDS_SIZE is a 9-bit field (mask 0x1FF); uint16_t so
+	// values >= 256 granules don't truncate.
+	uint16_t lds_size       = 0;
 };
 
 struct EsStageRegisters
