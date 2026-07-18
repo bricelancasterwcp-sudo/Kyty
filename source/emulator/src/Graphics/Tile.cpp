@@ -272,10 +272,12 @@ public:
 };
 
 // 2D-thin (tile mode 14, THIN_2D_THIN) texture tiler. Math verified
-// byte-for-byte against freegnm's production GpuAddress tiler (base+neo)
-// and AMD addrlib; see kyty-assets/cbtest/notes/2dthin-detile-swizzle-and-oracle.md.
+// byte-for-byte against the addrlib-corrected freegnm production tiler
+// (base+neo); see kyty-assets/cbtest/notes/2dthin-detile-swizzle-and-oracle.md.
 // NOTE: neo textures use pipe config P16_32x32_8x16 — NOT Tiler32's scanout
-// neo config. v1: 32bpp RGBA8, levels==1 only (fails loud otherwise).
+// neo config. Supports 32bpp RGBA8 + BC1/BC2/BC3 (block space, config at the
+// element bpp) and, via the per-level dispatch in TileConvertTiledToLinear,
+// mip chains whose small levels degrade to 1D-thin (fails loud otherwise).
 class Tiler2dThin
 {
 public:
@@ -295,17 +297,23 @@ public:
 	uint32_t m_bank_bits         = 0;
 	bool     m_neo               = false;
 
-	void Init(uint32_t dfmt, uint32_t nfmt, uint32_t width, uint32_t height, uint32_t pitch, uint32_t levels, bool neo)
+	// width/height = the level's real (walk) dims, pitch = the linear output
+	// stride, storage_width = the level's storage width (all in texels; the
+	// tiled layout pads storage_width to the macro width in element space).
+	// For a single-level texture storage_width == the T# pitch.
+	void Init(uint32_t dfmt, uint32_t nfmt, uint32_t width, uint32_t height, uint32_t pitch, uint32_t storage_width, bool neo)
 	{
 		bool rgba8 = ((nfmt == 9 || nfmt == 0) && dfmt == 10);
 		bool bc64  = (nfmt == 0 && dfmt == 35);                                                       // BC1 (8-byte block)
 		bool bc128 = ((nfmt == 0 && (dfmt == 36 || dfmt == 37)) || (nfmt == 9 && dfmt == 37));        // BC2/BC3 (16-byte block)
 
-		if (!(rgba8 || bc64 || bc128) || levels != 1)
+		if (!(rgba8 || bc64 || bc128))
 		{
-			EXIT("Tiler2dThin: unsupported: nfmt = %u, dfmt = %u, width = %u, height = %u, pitch = %u, levels = %u, neo = %s\n", nfmt,
-			     dfmt, width, height, pitch, levels, neo ? "true" : "false");
+			EXIT("Tiler2dThin: unsupported: nfmt = %u, dfmt = %u, width = %u, height = %u, pitch = %u, neo = %s\n", nfmt, dfmt, width,
+			     height, pitch, neo ? "true" : "false");
 		}
+
+		uint32_t storage_width_e = storage_width;
 
 		if (rgba8)
 		{
@@ -321,6 +329,7 @@ public:
 			m_height            = std::max((height + 3) / 4, 1U);
 			m_pitch             = std::max((pitch + 3) / 4, 1U);
 			m_bytes_per_element = (bc64 ? 8 : 16);
+			storage_width_e     = std::max((storage_width + 3) / 4, 1U);
 		}
 		m_neo = neo;
 		// Macro-tile config derived at the ELEMENT bpp (addrlib-verified via
@@ -346,7 +355,7 @@ public:
 		m_bank_bits    = (m_num_banks == 8 ? 3 : 4);
 		// The tile-14 table's padded[] entries are {0,0} — padding is computed
 		// here, NOT taken from TileGetTextureSize.
-		m_padded_pitch = ((m_pitch + m_macro_width - 1) / m_macro_width) * m_macro_width;
+		m_padded_pitch = ((storage_width_e + m_macro_width - 1) / m_macro_width) * m_macro_width;
 	}
 
 	// THIN micro-tile element order (same interleave as Tiler1d)
@@ -426,6 +435,29 @@ public:
 		       ((total_offset >> 8u) << (8u + m_pipe_bits + m_bank_bits));
 	}
 };
+
+static uint32_t NextPow2(uint32_t v)
+{
+	uint32_t r = 1;
+	while (r < v)
+	{
+		r <<= 1u;
+	}
+	return r;
+}
+
+// Per-level 2D-thin -> 1D-thin mip degrade (freegnm/addrlib
+// ComputeSurfaceMipLevelTileMode, verified per level against freegnm +
+// the upstream pow2 tables via cbtest/tiling-oracle): level 0 never
+// degrades; a smaller level degrades when its storage dims no longer fill
+// one macro tile. The tile-split/bank-interleave threshold terms of the
+// full predicate provably never fire for the supported formats. 32bpp
+// macro = 128 x (base 64 / neo 128).
+static bool Tile14MipLevelDegrades(uint32_t storage_width, uint32_t storage_height, bool neo)
+{
+	uint32_t macro_height = (neo ? 128 : 64);
+	return storage_width < 128 || storage_height < macro_height;
+}
 
 static Tiler* g_tiler = nullptr;
 
@@ -683,10 +715,62 @@ void TileConvertTiledToLinear(void* dst, const void* src, TileMode mode, uint32_
 
 	if (tile == 14)
 	{
-		// 2D-thin: v1 is single-level (Tiler2dThin::Init enforces the rest)
-		Tiler2dThin t;
-		t.Init(dfmt, nfmt, width, height, pitch, levels, neo);
-		Detile2dThin(&t, dstptr + level_sizes[0].offset, srcptr + level_sizes[0].offset);
+		if (levels == 1)
+		{
+			Tiler2dThin t;
+			t.Init(dfmt, nfmt, width, height, pitch, pitch, neo);
+			Detile2dThin(&t, dstptr + level_sizes[0].offset, srcptr + level_sizes[0].offset);
+			return;
+		}
+
+		// Mip chain (32bpp only for now; TileGetTextureSize fails loud for
+		// unsupported chains before we get here). Mipmapped surfaces are
+		// ALWAYS pow2-padded (addrlib HW rule; gnmCreateTexture sets pow2pad
+		// for nummiplevels > 1), so the per-level STORAGE dims are the padded
+		// level-0 dims shifted; small levels degrade from 2D-thin to 1D-thin
+		// (micro-tiled, 8x8 padding). Walk dims stay the logical mip dims.
+		// Verified per level vs freegnm + the upstream pow2 tables
+		// (cbtest/tiling-oracle) + the NPOT pow2pad fixture chain.
+		EXIT_NOT_IMPLEMENTED(dfmt != 10);
+
+		uint32_t p0 = NextPow2(((pitch + 127) / 128) * 128);
+		uint32_t h0 = NextPow2(height);
+
+		uint32_t mip_width  = width;
+		uint32_t mip_height = height;
+		uint32_t mip_pitch  = pitch;
+
+		for (uint32_t l = 0; l < levels; l++)
+		{
+			uint32_t sw   = std::max(p0 >> l, 1U);
+			uint32_t sh   = std::max(h0 >> l, 1U);
+			bool     is2d = (l == 0) || !Tile14MipLevelDegrades(sw, sh, neo);
+
+			if (is2d)
+			{
+				Tiler2dThin t;
+				t.Init(dfmt, nfmt, mip_width, mip_height, mip_pitch, sw, neo);
+				Detile2dThin(&t, dstptr + level_sizes[l].offset, srcptr + level_sizes[l].offset);
+			} else
+			{
+				Tiler1d t;
+				t.Init(dfmt, nfmt, mip_width, mip_height, mip_pitch, ((sw + 7) / 8) * 8, ((sh + 7) / 8) * 8, neo);
+				Detile1d(&t, dstptr + level_sizes[l].offset, srcptr + level_sizes[l].offset, neo);
+			}
+
+			if (mip_width > 1)
+			{
+				mip_width /= 2;
+			}
+			if (mip_height > 1)
+			{
+				mip_height /= 2;
+			}
+			if (mip_pitch > 1)
+			{
+				mip_pitch /= 2;
+			}
+		}
 		return;
 	}
 
@@ -1325,27 +1409,75 @@ void TileGetTextureSize(uint32_t dfmt, uint32_t nfmt, uint32_t width, uint32_t h
 		}
 	}
 
+	if (tile == 14 && dfmt == 10 && (nfmt == 0 || nfmt == 9))
+	{
+		// 32bpp runtime chain law for shapes/chains not in the pow2 table
+		// (NPOT, any levels). Per-level storage dims follow the addrlib mip
+		// law (width from the BASE PADDED PITCH shifted, height from the
+		// base height shifted, NextPow2-padded for levels > 0); levels that
+		// degrade to 1D-thin pad to 8x8 micro tiles instead of the macro
+		// tile. Verified per level against freegnm AND the upstream pow2
+		// tables (cbtest/tiling-oracle).
+		uint32_t base_padded_pitch = ((pitch + 127) / 128) * 128;
+		uint32_t macro_height      = (neo ? 128 : 64);
+		uint64_t off               = 0;
+
+		// Mipmapped surfaces are ALWAYS pow2-padded (addrlib: "mipmap
+		// including level 0 must be pow2 padded since SI hw expects so";
+		// gnmCreateTexture sets pow2pad for any nummiplevels > 1, so a real
+		// T#'s pitch is already NextPow2 — the NextPow2 here is defensive).
+		// The whole chain then derives from the padded level-0 dims shifted.
+		uint32_t p0 = (levels > 1 ? NextPow2(base_padded_pitch) : base_padded_pitch);
+		uint32_t h0 = (levels > 1 ? NextPow2(height) : height);
+
+		for (uint32_t l = 0; l < levels; l++)
+		{
+			uint32_t sw   = std::max(p0 >> l, 1U);
+			uint32_t sh   = std::max(h0 >> l, 1U);
+			bool     is2d = (l == 0) || !Tile14MipLevelDegrades(sw, sh, neo);
+
+			uint64_t padded_pitch  = (is2d ? (static_cast<uint64_t>(sw) + 127) / 128 * 128 : (static_cast<uint64_t>(sw) + 7) / 8 * 8);
+			uint64_t padded_height = (is2d ? (static_cast<uint64_t>(sh) + macro_height - 1) / macro_height * macro_height
+			                               : (static_cast<uint64_t>(sh) + 7) / 8 * 8);
+			uint64_t level_size    = padded_pitch * padded_height * 4;
+
+			if (level_sizes != nullptr)
+			{
+				level_sizes[l].size   = static_cast<uint32_t>(level_size);
+				level_sizes[l].offset = static_cast<uint32_t>(off);
+			}
+			if (padded_size != nullptr)
+			{
+				// Same convention as the tile-14 table entries: padding is
+				// computed by the tiler, not reported here.
+				padded_size[l].width  = 0;
+				padded_size[l].height = 0;
+			}
+			off += level_size;
+		}
+
+		EXIT_IF(off > UINT32_MAX);
+
+		if (total_size != nullptr)
+		{
+			total_size->size  = static_cast<uint32_t>(off);
+			total_size->align = (neo ? 65536 : 32768);
+		}
+		return;
+	}
+
 	if (tile == 14 && levels == 1)
 	{
-		// 2D-thin runtime size fallback for shapes not in the pow2 table
-		// (NPOT, and all BC shapes — tile 14 has no BC tables). Pad law and
-		// base align verified per-element and per-size against the
-		// addrlib-corrected freegnm tiler (cbtest/tiling-oracle xcheck,
-		// base+neo): element pitch pads to the macro-tile width, height to
-		// the macro-tile height; align = one macro tile. BC runs in block
-		// space (element = 4x4 block; the T# pitch is in texels).
+		// 2D-thin runtime size fallback for BC shapes (tile 14 has no BC
+		// tables). Pad law and base align verified per-element and per-size
+		// against the addrlib-corrected freegnm tiler (cbtest/tiling-oracle
+		// xcheck, base+neo): element pitch pads to the macro-tile width,
+		// height to the macro-tile height; align = one macro tile. BC runs
+		// in block space (element = 4x4 block; the T# pitch is in texels).
 		uint64_t size  = 0;
 		uint32_t align = 0;
 
-		if (dfmt == 10 && (nfmt == 0 || nfmt == 9))
-		{
-			// 32-bit texels: macro 128 x (base 64 / neo 128)
-			uint64_t macro_height  = (neo ? 128 : 64);
-			uint64_t padded_pitch  = ((pitch + 127) / 128) * 128;
-			uint64_t padded_height = ((height + macro_height - 1) / macro_height) * macro_height;
-			size                   = padded_pitch * padded_height * 4;
-			align                  = (neo ? 65536 : 32768);
-		} else if (nfmt == 0 && dfmt == 35)
+		if (nfmt == 0 && dfmt == 35)
 		{
 			// BC1: 8-byte blocks, same macro config as 32bpp (mtm 1x1_16)
 			uint64_t block_pitch   = (pitch + 3) / 4;
