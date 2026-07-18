@@ -297,31 +297,56 @@ public:
 
 	void Init(uint32_t dfmt, uint32_t nfmt, uint32_t width, uint32_t height, uint32_t pitch, uint32_t levels, bool neo)
 	{
-		if (!((nfmt == 9 && dfmt == 10) || (nfmt == 0 && dfmt == 10)) || levels != 1)
+		bool rgba8 = ((nfmt == 9 || nfmt == 0) && dfmt == 10);
+		bool bc64  = (nfmt == 0 && dfmt == 35);                                                       // BC1 (8-byte block)
+		bool bc128 = ((nfmt == 0 && (dfmt == 36 || dfmt == 37)) || (nfmt == 9 && dfmt == 37));        // BC2/BC3 (16-byte block)
+
+		if (!(rgba8 || bc64 || bc128) || levels != 1)
 		{
 			EXIT("Tiler2dThin: unsupported: nfmt = %u, dfmt = %u, width = %u, height = %u, pitch = %u, levels = %u, neo = %s\n", nfmt,
 			     dfmt, width, height, pitch, levels, neo ? "true" : "false");
 		}
 
-		m_width             = width;
-		m_height            = height;
-		m_pitch             = pitch;
-		m_bytes_per_element = 4;
-		m_neo               = neo;
-		// 32bpp 2D-thin macro-tile config: base P8_32x32_16x16/16-bank,
-		// neo P16_32x32_8x16/8-bank (bank_height 2, aspect 1).
-		m_num_pipes    = neo ? 16 : 8;
-		m_num_banks    = neo ? 8 : 16;
-		m_bank_width   = 1;
-		m_bank_height  = neo ? 2 : 1;
-		m_macro_aspect = neo ? 1 : 2;
+		if (rgba8)
+		{
+			m_width             = width;
+			m_height            = height;
+			m_pitch             = pitch;
+			m_bytes_per_element = 4;
+		} else
+		{
+			// BC runs in block space: one element = one 4x4 block (addrlib
+			// AdjustSurfaceInfo semantics; the T# pitch is in texels).
+			m_width             = std::max((width + 3) / 4, 1U);
+			m_height            = std::max((height + 3) / 4, 1U);
+			m_pitch             = std::max((pitch + 3) / 4, 1U);
+			m_bytes_per_element = (bc64 ? 8 : 16);
+		}
+		m_neo = neo;
+		// Macro-tile config derived at the ELEMENT bpp (addrlib-verified via
+		// cbtest/tiling-oracle xcheck): 32-bit texels and 64-bit blocks share
+		// mtm 1x1_16 (base P8/16-bank, neo P16/8-bank bank_height 2 aspect 1);
+		// 128-bit blocks use mtm 1x1_8 (8 banks, bank_height 1, aspect 1).
+		m_num_pipes  = neo ? 16 : 8;
+		m_bank_width = 1;
+		if (bc128)
+		{
+			m_num_banks    = 8;
+			m_bank_height  = 1;
+			m_macro_aspect = 1;
+		} else
+		{
+			m_num_banks    = neo ? 8 : 16;
+			m_bank_height  = neo ? 2 : 1;
+			m_macro_aspect = neo ? 1 : 2;
+		}
 		m_macro_width  = 8 * m_bank_width * m_num_pipes * m_macro_aspect;
 		m_macro_height = 8 * m_bank_height * m_num_banks / m_macro_aspect;
 		m_pipe_bits    = neo ? 4 : 3;
-		m_bank_bits    = neo ? 3 : 4;
+		m_bank_bits    = (m_num_banks == 8 ? 3 : 4);
 		// The tile-14 table's padded[] entries are {0,0} — padding is computed
 		// here, NOT taken from TileGetTextureSize.
-		m_padded_pitch = ((pitch + m_macro_width - 1) / m_macro_width) * m_macro_width;
+		m_padded_pitch = ((m_pitch + m_macro_width - 1) / m_macro_width) * m_macro_width;
 	}
 
 	// THIN micro-tile element order (same interleave as Tiler1d)
@@ -582,17 +607,51 @@ static void Detile1d(const Tiler1d* t, uint8_t* dst, const uint8_t* src, bool ne
 
 static void Detile2dThin(const Tiler2dThin* t, uint8_t* dst, const uint8_t* src)
 {
-	for (uint32_t y = 0; y < t->m_height; y++)
+	if (t->m_bytes_per_element == 4)
 	{
-		uint64_t linear_offset = static_cast<uint64_t>(y) * t->m_pitch * 4;
-
-		for (uint32_t x = 0; x < t->m_width; x++)
+		for (uint32_t y = 0; y < t->m_height; y++)
 		{
-			auto tiled_offset = t->GetTiledOffset(x, y);
+			uint64_t linear_offset = static_cast<uint64_t>(y) * t->m_pitch * 4;
 
-			*reinterpret_cast<uint32_t*>(dst + linear_offset) = *reinterpret_cast<const uint32_t*>(src + tiled_offset);
-			linear_offset += 4;
+			for (uint32_t x = 0; x < t->m_width; x++)
+			{
+				auto tiled_offset = t->GetTiledOffset(x, y);
+
+				*reinterpret_cast<uint32_t*>(dst + linear_offset) = *reinterpret_cast<const uint32_t*>(src + tiled_offset);
+				linear_offset += 4;
+			}
 		}
+	} else if (t->m_bytes_per_element == 8)
+	{
+		for (uint32_t y = 0; y < t->m_height; y++)
+		{
+			uint64_t linear_offset = static_cast<uint64_t>(y) * t->m_pitch * 8;
+
+			for (uint32_t x = 0; x < t->m_width; x++)
+			{
+				auto tiled_offset = t->GetTiledOffset(x, y);
+
+				*reinterpret_cast<uint64_t*>(dst + linear_offset) = *reinterpret_cast<const uint64_t*>(src + tiled_offset);
+				linear_offset += 8;
+			}
+		}
+	} else if (t->m_bytes_per_element == 16)
+	{
+		for (uint32_t y = 0; y < t->m_height; y++)
+		{
+			uint64_t linear_offset = static_cast<uint64_t>(y) * t->m_pitch * 16;
+
+			for (uint32_t x = 0; x < t->m_width; x++)
+			{
+				auto tiled_offset = t->GetTiledOffset(x, y);
+
+				*reinterpret_cast<Uint128*>(dst + linear_offset) = *reinterpret_cast<const Uint128*>(src + tiled_offset);
+				linear_offset += 16;
+			}
+		}
+	} else
+	{
+		EXIT("Unknown size");
 	}
 }
 
@@ -1268,19 +1327,44 @@ void TileGetTextureSize(uint32_t dfmt, uint32_t nfmt, uint32_t width, uint32_t h
 
 	if (tile == 14 && levels == 1)
 	{
-		// 2D-thin runtime size fallback for shapes not in the pow2 table (NPOT).
-		// Pad law and base align verified per-texel and per-size against
-		// freegnm's production tiler (cbtest/tiling-oracle xcheck, base+neo):
-		// pitch pads to the 32bpp macro-tile width (128 base+neo), height to
-		// the macro-tile height (base 64, neo 128); align = one macro tile.
-		uint64_t size = 0;
+		// 2D-thin runtime size fallback for shapes not in the pow2 table
+		// (NPOT, and all BC shapes — tile 14 has no BC tables). Pad law and
+		// base align verified per-element and per-size against the
+		// addrlib-corrected freegnm tiler (cbtest/tiling-oracle xcheck,
+		// base+neo): element pitch pads to the macro-tile width, height to
+		// the macro-tile height; align = one macro tile. BC runs in block
+		// space (element = 4x4 block; the T# pitch is in texels).
+		uint64_t size  = 0;
+		uint32_t align = 0;
 
 		if (dfmt == 10 && (nfmt == 0 || nfmt == 9))
 		{
+			// 32-bit texels: macro 128 x (base 64 / neo 128)
 			uint64_t macro_height  = (neo ? 128 : 64);
 			uint64_t padded_pitch  = ((pitch + 127) / 128) * 128;
 			uint64_t padded_height = ((height + macro_height - 1) / macro_height) * macro_height;
 			size                   = padded_pitch * padded_height * 4;
+			align                  = (neo ? 65536 : 32768);
+		} else if (nfmt == 0 && dfmt == 35)
+		{
+			// BC1: 8-byte blocks, same macro config as 32bpp (mtm 1x1_16)
+			uint64_t block_pitch   = (pitch + 3) / 4;
+			uint64_t block_height  = (height + 3) / 4;
+			uint64_t macro_height  = (neo ? 128 : 64);
+			uint64_t padded_pitch  = ((block_pitch + 127) / 128) * 128;
+			uint64_t padded_height = ((block_height + macro_height - 1) / macro_height) * macro_height;
+			size                   = padded_pitch * padded_height * 8;
+			align                  = (neo ? 131072 : 65536);
+		} else if ((nfmt == 0 && (dfmt == 36 || dfmt == 37)) || (nfmt == 9 && dfmt == 37))
+		{
+			// BC2/BC3: 16-byte blocks, mtm 1x1_8 — macro (base 64 / neo 128) x 64
+			uint64_t block_pitch   = (pitch + 3) / 4;
+			uint64_t block_height  = (height + 3) / 4;
+			uint64_t macro_width   = (neo ? 128 : 64);
+			uint64_t padded_pitch  = ((block_pitch + macro_width - 1) / macro_width) * macro_width;
+			uint64_t padded_height = ((block_height + 63) / 64) * 64;
+			size                   = padded_pitch * padded_height * 16;
+			align                  = (neo ? 131072 : 65536);
 		}
 
 		if (size != 0)
@@ -1290,7 +1374,7 @@ void TileGetTextureSize(uint32_t dfmt, uint32_t nfmt, uint32_t width, uint32_t h
 			if (total_size != nullptr)
 			{
 				total_size->size  = static_cast<uint32_t>(size);
-				total_size->align = (neo ? 65536 : 32768);
+				total_size->align = align;
 			}
 			if (level_sizes != nullptr)
 			{
