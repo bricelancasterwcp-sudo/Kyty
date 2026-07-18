@@ -1476,6 +1476,178 @@ int KYTY_SYSV_ABI NetSend(int sock, const void* buf, size_t len, int flags)
 	return static_cast<int>(sent);
 }
 
+// --- POSIX socket-server bridge -------------------------------------------
+//
+// The sceNet* functions above are the SCE HLE (SCE error codes, guest calls
+// them by their sce* names). OpenOrbis titles can ALSO use the raw POSIX
+// socket API imported from the "libkernel" library (socket via __sys_socketex,
+// plus bind/listen/accept). Those follow POSIX semantics: return an fd / 0 on
+// success, -1 on error with the thread's errno cell set. This bridge provides
+// the server side (bind/listen/accept) the sceNet layer never had. Ids are raw
+// host fds, shared with the sceNet functions above.
+
+int HostErrnoToPosix(int host_errno)
+{
+	switch (host_errno)
+	{
+		case EBADF: return Posix::POSIX_EBADF;
+		case EINVAL: return Posix::POSIX_EINVAL;
+		case EACCES: return Posix::POSIX_EACCES;
+		case EFAULT: return Posix::POSIX_EFAULT;
+		case EAGAIN: return Posix::POSIX_EAGAIN;
+		case EMFILE: return Posix::POSIX_EMFILE;
+		case ENFILE: return Posix::POSIX_ENFILE;
+		case ENOTSOCK: return Posix::POSIX_ENOTSOCK;
+		case EOPNOTSUPP: return Posix::POSIX_EOPNOTSUPP;
+		case EAFNOSUPPORT: return Posix::POSIX_EAFNOSUPPORT;
+		case EPROTONOSUPPORT: return Posix::POSIX_EPROTONOSUPPORT;
+		case EADDRINUSE: return Posix::POSIX_EADDRINUSE;
+		case EADDRNOTAVAIL: return Posix::POSIX_EADDRNOTAVAIL;
+		case ECONNRESET: return Posix::POSIX_ECONNRESET;
+		case ENOTCONN: return Posix::POSIX_ENOTCONN;
+		case ECONNREFUSED: return Posix::POSIX_ECONNREFUSED;
+		default: return Posix::POSIX_EINVAL;
+	}
+}
+
+// True if fd is a host socket we handed to the guest (so POSIX read/write/close
+// on it must go to the host socket, not the file-descriptor registry).
+bool IsHostSocket(int fd)
+{
+	if (fd < 0)
+	{
+		return false;
+	}
+	int       type = 0;
+	socklen_t len  = sizeof(type);
+	return getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &len) == 0;
+}
+
+// POSIX close() of a guest socket. Mirrors NetSocketClose: purge the fd from any
+// sceNet epoll set first (else host fd-number reuse leaves a stale registration
+// watching an unrelated socket). Returns 0, or a POSIX errno on failure.
+int HostSocketClose(int fd)
+{
+	epoll_forget_socket(fd);
+
+	if (close(fd) < 0)
+	{
+		return HostErrnoToPosix(errno);
+	}
+
+	return 0;
+}
+
+int KYTY_SYSV_ABI NetSysSocket(const char* name, int domain, int type, int protocol)
+{
+	PRINT_NAME();
+
+	printf("\t name = %s, domain = %d, type = %d, protocol = %d\n", (name != nullptr ? name : "(null)"), domain, type, protocol);
+
+	// AF_INET == 2 and SOCK_STREAM == 1 / SOCK_DGRAM == 2 on both the guest
+	// (FreeBSD ABI) and the Linux host, so the constants pass through directly.
+	if (domain != AF_INET)
+	{
+		*Posix::GetErrorAddr() = Posix::POSIX_EAFNOSUPPORT;
+		return -1;
+	}
+	if (type != SOCK_STREAM && type != SOCK_DGRAM)
+	{
+		*Posix::GetErrorAddr() = Posix::POSIX_EPROTONOSUPPORT;
+		return -1;
+	}
+
+	int fd = socket(AF_INET, type, 0);
+	if (fd < 0)
+	{
+		*Posix::GetErrorAddr() = HostErrnoToPosix(errno);
+		return -1;
+	}
+
+	(void)protocol;
+	return fd;
+}
+
+int KYTY_SYSV_ABI NetBind(int sock, const void* addr, uint32_t addrlen)
+{
+	PRINT_NAME();
+
+	if (addr == nullptr || addrlen < sizeof(NetSockaddrIn))
+	{
+		*Posix::GetErrorAddr() = Posix::POSIX_EINVAL;
+		return -1;
+	}
+
+	const auto* in = static_cast<const NetSockaddrIn*>(addr);
+
+	if (in->sin_family != AF_INET)
+	{
+		*Posix::GetErrorAddr() = Posix::POSIX_EAFNOSUPPORT;
+		return -1;
+	}
+
+	sockaddr_in host {};
+	host.sin_family      = AF_INET;
+	host.sin_port        = in->sin_port; // already network byte order
+	host.sin_addr.s_addr = in->sin_addr;
+
+	printf("\t bind to %s:%u\n", inet_ntoa(host.sin_addr), ntohs(host.sin_port));
+
+	if (bind(sock, reinterpret_cast<sockaddr*>(&host), sizeof(host)) < 0)
+	{
+		*Posix::GetErrorAddr() = HostErrnoToPosix(errno);
+		return -1;
+	}
+
+	return OK;
+}
+
+int KYTY_SYSV_ABI NetListen(int sock, int backlog)
+{
+	PRINT_NAME();
+
+	printf("\t sock = %d, backlog = %d\n", sock, backlog);
+
+	if (listen(sock, backlog) < 0)
+	{
+		*Posix::GetErrorAddr() = HostErrnoToPosix(errno);
+		return -1;
+	}
+
+	return OK;
+}
+
+int KYTY_SYSV_ABI NetAccept(int sock, void* addr, uint32_t* addrlen)
+{
+	PRINT_NAME();
+
+	sockaddr_in host {};
+	socklen_t   host_len = sizeof(host);
+
+	int fd = accept(sock, reinterpret_cast<sockaddr*>(&host), &host_len);
+	if (fd < 0)
+	{
+		*Posix::GetErrorAddr() = HostErrnoToPosix(errno);
+		return -1;
+	}
+
+	// translate the host peer address back into the guest FreeBSD layout
+	if (addr != nullptr && addrlen != nullptr && *addrlen >= sizeof(NetSockaddrIn))
+	{
+		auto* out          = static_cast<NetSockaddrIn*>(addr);
+		out->sin_len       = sizeof(NetSockaddrIn);
+		out->sin_family    = AF_INET;
+		out->sin_port      = host.sin_port;        // network byte order
+		out->sin_addr      = host.sin_addr.s_addr; // network byte order
+		memset(out->sin_zero, 0, sizeof(out->sin_zero));
+		*addrlen = sizeof(NetSockaddrIn);
+	}
+
+	printf("\t accepted %s:%u -> fd %d\n", inet_ntoa(host.sin_addr), ntohs(host.sin_port), fd);
+
+	return fd;
+}
+
 int KYTY_SYSV_ABI NetRecv(int sock, void* buf, size_t len, int flags)
 {
 	EXIT_NOT_IMPLEMENTED(flags != 0);

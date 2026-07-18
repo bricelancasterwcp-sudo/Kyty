@@ -17,6 +17,7 @@
 #include "Emulator/Loader/Nid.h"
 #include "Emulator/Loader/RuntimeLinker.h"
 #include "Emulator/Loader/SymbolDatabase.h"
+#include "Emulator/Network.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -997,6 +998,14 @@ LIB_DEFINE(InitLibKernel_1_FS)
 	LIB_FUNC("JGMio+21L4c", Posix::mkdir);
 	LIB_FUNC("VAzswvTOCzI", Posix::unlink);
 	LIB_FUNC("NN01qLRhiqU", Posix::rename);
+
+	// POSIX socket API imported from libkernel. socket() is a libc wrapper over
+	// __sys_socketex; bind/listen/accept are direct libkernel exports. The
+	// server side (bind/listen/accept) had no sceNet equivalent - see Network.cpp.
+	LIB_FUNC("pG70GT5yRo4", Network::Net::NetSysSocket); // __sys_socketex
+	LIB_FUNC("KuOmgKoqCdY", Network::Net::NetBind);      // bind
+	LIB_FUNC("pxnCmagrtao", Network::Net::NetListen);    // listen
+	LIB_FUNC("3e+4Iv7IJ8U", Network::Net::NetAccept);    // accept
 }
 
 LIB_DEFINE(InitLibKernel_1_Mem)

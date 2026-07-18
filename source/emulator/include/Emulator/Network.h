@@ -36,6 +36,16 @@ int      KYTY_SYSV_ABI NetResolverAbort(int rid, int flags);
 int      KYTY_SYSV_ABI NetConnect(int sock, const void* addr, uint32_t addrlen);
 int      KYTY_SYSV_ABI NetSend(int sock, const void* buf, size_t len, int flags);
 int      KYTY_SYSV_ABI NetRecv(int sock, void* buf, size_t len, int flags);
+
+// POSIX socket-server bridge (imported from the "libkernel" library, POSIX
+// errno semantics). Companion to the sceNet* client bridge; ids are host fds.
+bool     IsHostSocket(int fd);
+int      HostErrnoToPosix(int host_errno);
+int      HostSocketClose(int fd);
+int      KYTY_SYSV_ABI NetSysSocket(const char* name, int domain, int type, int protocol);
+int      KYTY_SYSV_ABI NetBind(int sock, const void* addr, uint32_t addrlen);
+int      KYTY_SYSV_ABI NetListen(int sock, int backlog);
+int      KYTY_SYSV_ABI NetAccept(int sock, void* addr, uint32_t* addrlen);
 int      KYTY_SYSV_ABI NetSetsockopt(int sock, int level, int optname, const void* optval, uint32_t optlen);
 uint16_t KYTY_SYSV_ABI NetHtons(uint16_t host16);
 int      KYTY_SYSV_ABI NetEpollCreate(const char* name, int flags);

@@ -9,9 +9,13 @@
 
 #include "Emulator/Libs/Errno.h"
 #include "Emulator/Libs/Libs.h"
+#include "Emulator/Network.h"
 
 #include <atomic>
+#include <cerrno>
 #include <climits>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #ifdef KYTY_EMU_ENABLED
 
@@ -68,6 +72,7 @@ public:
 
 	int   CreateDescriptor();
 	void  DeleteDescriptor(int d);
+	bool  IsValidDescriptor(int d);
 	File* GetFile(int d);
 	File* GetFile(const String& real_name);
 	void  CloseAll();
@@ -131,6 +136,23 @@ File* FileDescriptors::GetFile(int d)
 	EXIT_IF(!m_files.IndexValid(index));
 
 	return m_files.At(index);
+}
+
+// Non-aborting counterpart to GetFile: is d a live guest file descriptor?
+// Used to disambiguate the file-descriptor id space from the raw host-fd id
+// space that sockets use before routing POSIX read/write/close.
+bool FileDescriptors::IsValidDescriptor(int d)
+{
+	Core::LockGuard lock(m_mutex);
+
+	if (d < DESCRIPTOR_MIN)
+	{
+		return false;
+	}
+
+	auto index = static_cast<uint32_t>(d - DESCRIPTOR_MIN);
+
+	return m_files.IndexValid(index) && m_files.At(index) != nullptr;
 }
 
 File* FileDescriptors::GetFile(const String& real_name)
@@ -404,6 +426,22 @@ int KYTY_SYSV_ABI KernelClose(int d)
 		return KERNEL_ERROR_EPERM;
 	}
 
+	// sockets live in a separate id space (raw host fds handed out by
+	// socket()/accept()); they are never in g_files. Check file validity FIRST
+	// so a guest file fd is never probed as a socket (its small index can alias a
+	// low host fd the emulator itself uses), and because GetFile() aborts on an
+	// out-of-range descriptor.
+	if (!g_files->IsValidDescriptor(d) && Network::Net::IsHostSocket(d))
+	{
+		// HostSocketClose purges the fd from any sceNet epoll set before closing
+		int perr = Network::Net::HostSocketClose(d);
+		if (perr != 0)
+		{
+			return KERNEL_ERROR_UNKNOWN + perr;
+		}
+		return OK;
+	}
+
 	auto* file = g_files->GetFile(d);
 
 	if (file == nullptr)
@@ -441,6 +479,17 @@ int64_t KYTY_SYSV_ABI KernelRead(int d, void* buf, size_t nbytes)
 	if (buf == nullptr)
 	{
 		return KERNEL_ERROR_EFAULT;
+	}
+
+	// socket fds bypass g_files (see KernelClose)
+	if (!g_files->IsValidDescriptor(d) && Network::Net::IsHostSocket(d))
+	{
+		ssize_t got = ::read(d, buf, nbytes);
+		if (got < 0)
+		{
+			return KERNEL_ERROR_UNKNOWN + Network::Net::HostErrnoToPosix(errno);
+		}
+		return got;
 	}
 
 	auto* file = g_files->GetFile(d);
@@ -500,6 +549,17 @@ int64_t KYTY_SYSV_ABI KernelWrite(int d, const void* buf, size_t nbytes)
 	if (d < DESCRIPTOR_MIN)
 	{
 		return KERNEL_ERROR_EPERM;
+	}
+
+	// socket fds bypass g_files (see KernelClose)
+	if (!g_files->IsValidDescriptor(d) && Network::Net::IsHostSocket(d))
+	{
+		ssize_t sent = ::write(d, buf, nbytes);
+		if (sent < 0)
+		{
+			return KERNEL_ERROR_UNKNOWN + Network::Net::HostErrnoToPosix(errno);
+		}
+		return sent;
 	}
 
 	auto* file = g_files->GetFile(d);
